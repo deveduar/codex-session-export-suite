@@ -4,13 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-exporter"
-version = "2.0.0"
+version = "2.1.0"
 description = "Extract and export Codex conversation sessions from VS Code"
 requires-python = ">=3.8"
 
 [project.scripts]
-codex_export = "codex_exporter.cli:main"
+codex_export = "cli:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["cli.py", "extract.py", "output.py", "products.py", "__init__.py"]
+[tool.setuptools]
+py-modules = ["cli", "config", "extract", "output", "products"]

@@ -36,6 +36,23 @@ class ProductConfig:
         self.no_reasoning = no_reasoning  # strip tool/output reasoning blocks
         self.role = role  # Force single role filter
 
+    def clone(self, **overrides: Any) -> "ProductConfig":
+        """Return a copy with optional overrides.
+
+        Used so CLI flags do not mutate the global preset objects.
+        """
+        values = {
+            "name": self.name,
+            "description": self.description,
+            "role_filter": list(self.role_filter),
+            "include_tool_output": self.include_tool_output,
+            "truncate_tool_output": self.truncate_tool_output,
+            "no_reasoning": self.no_reasoning,
+            "role": self.role,
+        }
+        values.update(overrides)
+        return ProductConfig(**values)
+
     def apply(self, messages: List[dict]) -> List[dict]:
         """Apply product filtering to a list of messages.
 

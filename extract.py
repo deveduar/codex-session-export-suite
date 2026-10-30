@@ -94,8 +94,6 @@ def extract_text_from_content(content: Any) -> str:
                 text = block.get("text", "")
                 if text and btype in ("input_text", "output_text", "text"):
                     parts.append(text)
-                elif text and isinstance(block.get(""), dict):
-                    parts.append(extract_text_from_content(text))
         return " ".join(parts).strip()
     return ""
 
@@ -138,10 +136,12 @@ def filter_payload(obj: dict, exclude_roles: bool = True) -> dict:
                     item_filtered = filter_payload(item, exclude_roles)
                     if item_filtered:
                         filtered_items.append(item_filtered)
-                else:
+                elif isinstance(item, str):
                     # Skip noise items (timestamps, ids, etc.)
-                    if not is_noise_key(str(item)) if isinstance(item, str) else False:
+                    if not is_noise_key(item):
                         filtered_items.append(item)
+                else:
+                    filtered_items.append(item)
             if filtered_items:
                 filtered[key] = filtered_items
         else:
@@ -175,6 +175,24 @@ def extract_messages_from_jsonl(
         List of dicts with 'role', 'timestamp', 'text' keys
     """
     messages = []
+    seen_keys = set()
+
+    def add_message(role, timestamp, text, payload, dedupe=False):
+        text = (text or "").strip()
+        if not role or role not in include_roles or not text:
+            return
+
+        key = (role, text)
+        if dedupe and key in seen_keys:
+            return
+
+        seen_keys.add(key)
+        messages.append({
+            "role": role,
+            "timestamp": timestamp or "",
+            "text": text,
+            "raw_payload": payload,
+        })
 
     with open(file_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -195,37 +213,32 @@ def extract_messages_from_jsonl(
                 payload = data.get("payload", {})
                 if isinstance(payload, dict):
                     role = detect_role(payload)
-                    if role and role in include_roles:
-                        # Extract text content
-                        content = payload.get("content", [])
-                        text = extract_text_from_content(content) if content else ""
-
-                        # Get timestamp
-                        timestamp = data.get("timestamp", "")
-                        if not timestamp:
-                            timestamp = payload.get("timestamp", "")
-
-                        messages.append({
-                            "role": role,
-                            "timestamp": timestamp,
-                            "text": text.strip(),
-                            "raw_payload": payload,
-                        })
+                    content = payload.get("content", [])
+                    text = extract_text_from_content(content) if content else ""
+                    timestamp = data.get("timestamp", "") or payload.get("timestamp", "")
+                    add_message(role, timestamp, text, payload)
 
             # Handle turn_context type
             elif data.get("type") == "turn_context":
                 payload = data.get("payload", {})
                 if isinstance(payload, dict):
                     role = detect_role(payload)
-                    if role and role in include_roles:
-                        content = payload.get("content", [])
-                        text = extract_text_from_content(content) if content else ""
-                        timestamp = data.get("timestamp", "")
-                        messages.append({
-                            "role": role,
-                            "timestamp": timestamp,
-                            "text": text.strip(),
-                            "raw_payload": payload,
-                        })
+                    content = payload.get("content", [])
+                    text = extract_text_from_content(content) if content else ""
+                    timestamp = data.get("timestamp", "") or payload.get("timestamp", "")
+                    add_message(role, timestamp, text, payload)
+
+            # Handle event_msg type used by some Codex versions.
+            elif data.get("type") == "event_msg":
+                payload = data.get("payload", {})
+                if isinstance(payload, dict):
+                    event_type = str(payload.get("type", "")).lower()
+                    if event_type in ("user_message", "agent_message"):
+                        role = "user" if event_type == "user_message" else "assistant"
+                        text = payload.get("message") or payload.get("text") or ""
+                        if not isinstance(text, str):
+                            text = extract_text_from_content(text)
+                        timestamp = data.get("timestamp", "") or payload.get("timestamp", "")
+                        add_message(role, timestamp, text, payload, dedupe=True)
 
     return messages

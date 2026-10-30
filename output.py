@@ -32,46 +32,30 @@ def format_markdown_transcript(
     # Header
     lines.append(f"# Historial Codex: `{filename}`")
     lines.append("")
-    lines.append("---\n")
+    lines.append("---")
+    lines.append("")
     
-    # Group messages by role for clean formatting
-    user_msgs = [m for m in messages if m.get("role") == "user"]
-    assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
-    
-    # User messages section
-    if user_msgs:
-        lines.append("## USUARIO\n")
-        for msg in user_msgs:
-            header = f"> **Usuario**"
-            if include_timestamps and msg.get("timestamp"):
-                header += f" · {msg['timestamp']}"
-            header += "\n"
-            lines.append(header)
-            lines.append(f"> {msg['text']}\n")
-            lines.append("---\n")
-    
-    # Assistant messages section
-    if assistant_msgs:
-        lines.append("## ASISTENTE (CODEX)\n")
-        for msg in assistant_msgs:
-            header = f"> **Codex**"
-            if include_timestamps and msg.get("timestamp"):
-                header += f" · {msg['timestamp']}"
-            header += "\n"
-            lines.append(header)
-            lines.append(f"> {msg['text']}\n")
-            lines.append("---\n")
-    
-    # If no role-separated messages, just list all chronologically
-    if not user_msgs and not assistant_msgs and messages:
-        lines = [f"# Historial Codex: `{filename}`"]
+    # Keep the original chronological order: user/assistant turns interleaved.
+    for msg in messages:
+        role = msg.get("role")
+        if not show_role:
+            header = ">"
+        else:
+            label = "Usuario" if role == "user" else "Codex" if role == "assistant" else str(role or "Mensaje")
+            header = f"> **{label}**"
+
+        if include_timestamps and msg.get("timestamp"):
+            header += f" · {msg['timestamp']}"
+
+        lines.append(header)
+        text = str(msg.get("text", ""))
+        quoted_lines = [f"> {line}" if line else ">" for line in text.splitlines()]
+        lines.extend(quoted_lines or [">"])
         lines.append("")
-        lines.append("---\n")
-        for i, msg in enumerate(messages, 1):
-            timestamp_part = f" *({msg.get('timestamp', '')})*" if include_timestamps and msg.get("timestamp") else ""
-            lines.append(f"### Mensaje {i}{timestamp_part}\n\n{msg['text']}\n\n---\n")
+        lines.append("---")
+        lines.append("")
     
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def format_markdown_conversation(
