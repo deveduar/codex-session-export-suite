@@ -159,6 +159,52 @@ def parse_jsonl_line(line: str) -> Optional[dict]:
         return None
 
 
+def read_session_metadata(file_path: Path) -> Dict[str, Any]:
+    """Read safe session metadata from the first session_meta record."""
+    with open(file_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+
+            data = parse_jsonl_line(line)
+            if not isinstance(data, dict):
+                continue
+
+            if data.get("type") != "session_meta":
+                continue
+
+            payload = data.get("payload", {})
+            if not isinstance(payload, dict):
+                payload = {}
+
+            workspace_roots = payload.get("runtime_workspace_roots") or []
+            if not isinstance(workspace_roots, list):
+                workspace_roots = []
+
+            git = payload.get("git") or {}
+            if not isinstance(git, dict):
+                git = {}
+
+            return {
+                "id": payload.get("id") or payload.get("session_id"),
+                "timestamp": payload.get("timestamp") or data.get("timestamp"),
+                "cwd": payload.get("cwd"),
+                "workspace_roots": [str(root) for root in workspace_roots],
+                "source": payload.get("source"),
+                "originator": payload.get("originator"),
+                "cli_version": payload.get("cli_version"),
+                "model_provider": payload.get("model_provider"),
+                "git": {
+                    key: git.get(key)
+                    for key in ("branch", "commit_hash")
+                    if git.get(key)
+                },
+            }
+
+    return {}
+
+
 def extract_messages_from_jsonl(
     file_path: Path,
     include_roles: Tuple[str, ...] = ("user", "assistant"),

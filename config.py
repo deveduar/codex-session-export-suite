@@ -18,6 +18,7 @@ CONFIG_FILENAME = "codex_export.ini"
 DEFAULTS: Dict[str, Any] = {
     "codex_dir": None,
     "output_dir": "./codex_exports",
+    "layout": "run",
     "preset": None,
     "products": None,
     "role": None,
@@ -150,6 +151,13 @@ def _parse_int(value: str) -> int:
     return number
 
 
+def _parse_layout(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in ("run", "flat"):
+        return normalized
+    raise ConfigError(f"Invalid layout value: {value!r}. Use run or flat.")
+
+
 def _parse_products(value: str) -> Optional[List[str]]:
     """Parse a comma/space separated product list."""
     products = value.replace(",", " ").split()
@@ -183,6 +191,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     if output_dir:
         config["output_dir"] = output_dir
 
+    layout = _get(parser, "output", "layout")
+    if layout:
+        config["layout"] = _parse_layout(layout)
+
     preset = _get(parser, "export", "preset", "default_preset")
     if preset:
         config["preset"] = preset
@@ -212,6 +224,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_output_dir = _get(parser, section, "output_dir")
         if flat_output_dir:
             config["output_dir"] = flat_output_dir
+
+        flat_layout = _get(parser, section, "layout")
+        if flat_layout:
+            config["layout"] = _parse_layout(flat_layout)
 
         flat_preset = _get(parser, section, "preset")
         if flat_preset:

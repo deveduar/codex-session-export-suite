@@ -144,7 +144,24 @@ python3 cli.py --list-presets
 
 `--products` accepts products only. `--preset` accepts presets only.
 
-Each product writes its own file type (`session_....md`, `memory_....jsonl`, `faithful_....json`, `digest_....md`), so products in the same preset do not overwrite each other.
+By default, each export creates a timestamped run folder. Products are stored in their own subfolders, with a run index, product indexes, and a `metadata.json` summary. Session filenames use the date, thread name (or project name), and a short session ID. Only product folders that contain exported files are created.
+
+```text
+codex_exports/
+└── 2026-10-30_20-45-12_archive/
+    ├── metadata.json
+    ├── index.md
+    ├── transcript/
+    │   ├── index.md
+    │   └── 2026-10-29_Thread-name_01a18894.md
+    └── memory/
+        ├── index.md
+        └── 2026-10-29_Thread-name_01a18894.jsonl
+```
+
+`metadata.json` contains export settings, counts, safe session metadata, and relative output paths. It omits account identifiers and full instruction payloads. Existing flat exports are left in place. To keep writing new files directly into the output directory, use `--flat` or set `layout = flat` in `[output]`.
+
+Use `--dry-run` to preview the run folder and output paths without creating files or directories.
 
 ---
 
@@ -174,6 +191,8 @@ dir =
 
 [output]
 dir = ./codex_exports
+# run or flat
+layout = run
 
 [export]
 # Leave empty to use the transcript product.
@@ -223,6 +242,7 @@ options:
   --role ROLE           user, assistant, or both
   --truncate N          Truncate text to N characters (0 disables truncation)
   --no-timestamps       Hide timestamps
+  --flat                Write files directly into the output directory
   --dry-run             Show what would be done without writing files
   --list-presets        List products and presets
   --version             Show version
