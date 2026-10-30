@@ -1,150 +1,62 @@
 # Codex Extension Exporter
 
-Portable Python tool to extract and export local Codex conversations as Markdown, JSONL, or JSON. It works on Linux and Windows and has no third-party dependencies.
-
-There is no installation step and no console alias. Run `cli.py` directly:
-
-- Linux/macOS: `python3 cli.py ...`
-- Windows: `py cli.py ...`
-
----
+Export readable and machine friendly views of local Codex sessions. The tool uses Python's standard library and runs on Windows, Linux, and macOS.
 
 ## Quick start
 
-Linux/macOS:
+```bash
+python3 cli.py --preset archive
+```
+
+On Windows, use `py cli.py --preset archive`. The tool looks for Codex under `CODEX_HOME` or `~/.codex` (`%USERPROFILE%\.codex` on Windows). To select an input explicitly, pass the Codex directory, its `sessions` directory, a subdirectory, or one `.jsonl` file:
 
 ```bash
-python3 cli.py --preset notes
+python3 cli.py /path/to/.codex --preset archive
 ```
 
-Windows CMD:
-
-```cmd
-py cli.py --preset notes
-```
-
-Windows PowerShell:
-
-```powershell
-py cli.py --preset notes
-```
-
-By default, the tool auto-detects Codex in `CODEX_HOME` or `~/.codex` (`%USERPROFILE%\.codex` on Windows), so you do not need to pass a path every time.
-
----
-
-## Input path
-
-The first argument can be:
-
-- the Codex root directory
-- the `sessions` directory
-- a year/month subdirectory
-- a single `.jsonl` file
-
-Linux/macOS:
+Preview the planned paths without writing files:
 
 ```bash
-python3 cli.py --preset notes
-python3 cli.py ~/.codex --preset notes
-python3 cli.py ~/.codex/sessions/2026/10 --preset notes
-python3 cli.py ~/.codex/sessions/2026/10/30/rollout-2026-10-30T12-00-00-abc.jsonl
+python3 cli.py --preset archive --dry-run
 ```
-
-Windows CMD:
-
-```cmd
-py cli.py --preset notes
-py cli.py "%USERPROFILE%\.codex" --preset notes
-py cli.py "%USERPROFILE%\.codex\sessions\2026\10" --preset notes
-py cli.py "%USERPROFILE%\.codex\sessions\2026\10\30\rollout-2026-10-30T12-00-00-abc.jsonl"
-```
-
-Windows PowerShell:
-
-```powershell
-py cli.py --preset notes
-py cli.py "$env:USERPROFILE\.codex" --preset notes
-py cli.py "$env:USERPROFILE\.codex\sessions\2026\10" --preset notes
-```
-
-> `~` is expanded by Python, but cmd and PowerShell do not expand it. In Windows use `%USERPROFILE%` in CMD, `$env:USERPROFILE` in PowerShell, or omit the path and let auto-detection find Codex.
-
----
-
-## Output directory
-
-Use `-o/--output` to choose where exported files are written:
-
-Linux/macOS:
-
-```bash
-python3 cli.py --preset notes -o ./codex_exports
-```
-
-Windows CMD:
-
-```cmd
-py cli.py --preset notes -o "%USERPROFILE%\codex_exports"
-```
-
-Windows PowerShell:
-
-```powershell
-py cli.py --preset notes -o "$env:USERPROFILE\codex_exports"
-```
-
----
 
 ## Products and presets
 
-A **product** is a single output format. A **preset** is a named combination of one or more products.
+Products are output formats; presets combine products and filters.
 
-### Products
+| Preset | Products and filtering | Data retention compared with source JSONL |
+|---|---|---|
+| `archive` | Transcript, memory, and faithful-message JSON | **Lossy overall.** The JSON product preserves raw payloads only for extracted messages; the other products contain transformed text. |
+| `quick` | Faithful-message JSON | **Lossy.** Preserves raw payloads for extracted messages, but not the complete source file. |
+| `study` | Truncated transcript and memory | **Lossy.** Transcript text is truncated; memory omits raw payloads. |
+| `review` | Transcript and faithful-message JSON | **Lossy overall.** The JSON product keeps raw payloads for extracted messages; the transcript is a transformed view. |
+| `notes` | Transcript with text truncated to about 500 characters | **Lossy.** Text is truncated. |
+| `conversation` | Transcript with extracted user and assistant text | **Lossy.** Message structure and non-text records are omitted. |
+| `prompts` | User messages only | **Lossy.** Assistant messages and non-text records are omitted. |
+| `rag` | Memory JSONL | **Lossy.** Keeps extracted role, timestamp, and text only. |
+| `digest` | Short extractive digest | **Lossy.** Text is shortened and source structure is omitted. |
 
-| Product | Description | Output |
-|---------|-------------|--------|
-| `transcript` | Full conversation in Markdown, in chronological order | `.md` |
-| `memory` | One JSON line per message for RAG or another AI | `.jsonl` |
-| `faithful` | Lossless JSON archive per session | `.json` |
-| `digest` | Short extractive summaries of conversation messages | `.md` |
+**No preset is a lossless copy of the source JSONL.** The `faithful` product stores original payloads for recognized user or assistant messages that contain extractable text. It does not preserve every event, metadata record, or line in the original session file. Keep the original Codex JSONL files when exact source preservation is required. The `review` preset does not redact the raw payloads in its faithful JSON output.
 
-### Presets
-
-| Preset | Products | Description |
-|--------|----------|-------------|
-| `archive` | `transcript` + `memory` + `faithful` | Full backup: transcript, memory corpus and faithful raw session |
-| `quick` | `faithful` | Faithful raw session only |
-| `study` | `transcript` (truncated) + `memory` | Readable transcript plus searchable memory corpus |
-| `review` | `transcript` (no reasoning) + `faithful` | Transcript without reasoning plus faithful raw session |
-| `notes` | `transcript` (truncated) | Plain transcript with text truncated to ~500 chars |
-| `conversation` | `transcript` (dialogue only) | Dialogue only: no tools, patches or reasoning |
-| `prompts` | `transcript` (user only) | User prompts only |
-| `rag` | `memory` | Searchable memory corpus for retrieval |
-| `digest` | `digest` | Short extractive summaries of conversation messages |
+| Product | Output |
+|---|---|
+| `transcript` | Markdown conversation |
+| `memory` | JSONL with one extracted message per line |
+| `faithful` | JSON containing extracted messages and their raw payloads |
+| `digest` | Markdown with short text excerpts |
 
 Examples:
 
 ```bash
-# Expand a preset into its products
-python3 cli.py --preset archive
-
-# Export specific products
-python3 cli.py --products transcript memory faithful
-
-# Only user prompts
-python3 cli.py --products transcript --role user
-
-# Truncate text
-python3 cli.py --preset notes --truncate 300
-
-# List products and presets
+python3 cli.py --preset notes
+python3 cli.py --products transcript memory
+python3 cli.py --preset prompts
 python3 cli.py --list-presets
 ```
 
-`--products` accepts products only. `--preset` accepts presets only.
+## Output layout
 
-By default, each export creates a timestamped run folder. Products are stored in their own subfolders, with a run index, product indexes, and a `metadata.json` summary. Session filenames use the date, thread name (or project name), and a short session ID. Only product folders that contain exported files are created.
+By default, each invocation creates a timestamped run directory. Product files are grouped by format, with a run index, product indexes, and `metadata.json`:
 
 ```text
 codex_exports/
@@ -152,170 +64,55 @@ codex_exports/
     ├── metadata.json
     ├── index.md
     ├── transcript/
-    │   ├── index.md
-    │   └── 2026-10-29_Thread-name_01a18894.md
-    └── memory/
-        ├── index.md
-        └── 2026-10-29_Thread-name_01a18894.jsonl
+    ├── memory/
+    └── faithful/
 ```
 
-`metadata.json` contains export settings, counts, safe session metadata, and relative output paths. It omits account identifiers and full instruction payloads. Existing flat exports are left in place. To keep writing new files directly into the output directory, use `--flat` or set `layout = flat` in `[output]`.
+Session filenames include the session date, thread or project name, and a short ID. Metadata contains export settings, counts, selected session metadata, and relative output paths; it omits account identifiers and full instruction payloads. Product directories are created only when they contain files. Existing flat exports are not moved.
 
-Use `--dry-run` to preview the run folder and output paths without creating files or directories.
-
----
-
-## Auto-detection
-
-The Codex directory is resolved in this order:
-
-1. Path passed as the first argument.
-2. `dir` in `codex_export.ini`.
-3. `CODEX_HOME` environment variable.
-4. `~/.codex` (`%USERPROFILE%\.codex` on Windows).
-5. `$XDG_CONFIG_HOME/codex` on non-Windows systems.
-
-The detected directory is printed when the export starts. If the detected directory has no sessions, pass the correct path explicitly or set it in the config file.
-
----
+To write new exports directly into the output directory, use `--flat` or set `layout = flat` in the config. The output directory defaults to `./codex_exports`; choose another with `-o/--output`.
 
 ## Configuration
 
-`codex_export.ini` changes the defaults:
+The optional `codex_export.ini` file controls defaults. CLI arguments take precedence.
 
 ```ini
 [codex]
-# Leave empty to auto-detect CODEX_HOME or ~/.codex.
-# Windows example: dir = %USERPROFILE%\.codex
 dir =
 
 [output]
 dir = ./codex_exports
-# run or flat
 layout = run
 
 [export]
-# Leave empty to use the transcript product.
 preset =
-# Explicit products, separated by commas or spaces.
 products =
-# user, assistant, or both. Leave empty for no filter.
 role =
-# Truncate text to N characters. Leave empty for no truncation.
 truncate =
 timestamps = true
 ```
 
-Precedence: **CLI arguments > config file > built-in defaults**.
+Leave `codex.dir` empty for auto-detection. Set either `preset` or `products`; when both are set, `products` takes precedence. `layout` accepts `run` or `flat`. Paths support `~`, `$HOME`, and Windows `%USERPROFILE%` variables.
 
-If both `preset` and `products` are set, `products` wins.
+Use a different config file with `--config PATH`. Other useful options:
 
-Configuration locations searched automatically:
-
-1. `./codex_export.ini` in the current directory.
-2. Per-user config:
-   - Windows: `%APPDATA%\codex_exporter\config.ini`
-   - Linux: `~/.config/codex_exporter/config.ini`
-
-Use a specific file with:
-
-```bash
-python3 cli.py --config ./my_config.ini
+```text
+--role user|assistant|both   Filter exported messages
+--truncate N                Truncate text to N characters; 0 disables truncation
+--no-timestamps             Omit timestamps from Markdown output
+--flat                      Write directly in the output directory
+--dry-run                   Preview paths without writing
+--output DIR                Choose the output directory
 ```
 
-Paths accept `~`, `$HOME`, and `%USERPROFILE%`. In INI files, write Windows paths without quotes.
+Run `python3 cli.py --help` for the full command reference.
 
----
+## Input and privacy
 
-## CLI options
+The exporter reads `.jsonl` files under `sessions/` by default. Archived sessions are not included automatically; pass the archived directory or a specific session file as the input path.
 
-```
-positional arguments:
-  codex_dir             Codex directory, sessions directory, subdirectory, or .jsonl file
-
-options:
-  -h, --help            Show help
-  -o, --output DIR      Output directory (default: config or ./codex_exports)
-  --config FILE         INI configuration file
-  -p, --preset PRESET   Export preset
-  --products NAME...    Products to export
-  --role ROLE           user, assistant, or both
-  --truncate N          Truncate text to N characters (0 disables truncation)
-  --no-timestamps       Hide timestamps
-  --flat                Write files directly into the output directory
-  --dry-run             Show what would be done without writing files
-  --list-presets        List products and presets
-  --version             Show version
-```
-
----
-
-## Codex data locations
-
-Linux:
-
-```
-~/.codex/
-├── sessions/
-│   └── 2026/10/27/rollout-....jsonl
-├── archived_sessions/
-├── session_index.jsonl
-└── config.toml
-```
-
-Windows:
-
-```
-%USERPROFILE%\.codex\
-├── sessions\
-│   └── 2026\10\27\rollout-....jsonl
-├── archived_sessions\
-├── session_index.jsonl
-└── config.toml
-```
-
-Only sessions under `sessions/` are read automatically. Archived conversations in `archived_sessions/` are not processed by default, but you can pass that directory or a specific `.jsonl` file as the first argument.
-
----
-
-## Using the same repository on Windows and Linux
-
-- There is no installation step; run `cli.py` from the repository on each system.
-- `codex_exports/` is ignored by Git, so exported files are not committed.
-- The default output is `./codex_exports`, relative to the directory where you run the command.
-- Filenames are sanitized for Windows-invalid characters.
-
-If both systems write to the same shared output directory and export the same session, the file is overwritten because the name is deterministic. Use a different output directory per system:
-
-Linux/macOS:
-
-```bash
-python3 cli.py --preset notes -o ./codex_exports/linux
-```
-
-Windows CMD:
-
-```cmd
-py cli.py --preset notes -o "%USERPROFILE%\codex_exports\windows"
-```
-
----
-
-## Repository structure
-
-```
-codex_extension_exporter/
-├── cli.py              # Entry point and CLI
-├── config.py           # INI loading and Codex auto-detection
-├── extract.py          # JSONL parsing and filtering
-├── products.py         # Products and presets
-├── output.py           # Markdown, JSONL, and JSON formatting
-├── codex_export.ini    # Default configuration
-└── README.md
-```
-
----
+Exports may contain conversation text and raw message payloads. Run indexes and metadata can include local paths such as the session working directory. Review generated files before sharing them.
 
 ## License
 
-No license file is included in this repository.
+This project is available under the MIT License; see [LICENSE](LICENSE).

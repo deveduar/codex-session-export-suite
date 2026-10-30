@@ -108,7 +108,7 @@ digest = ProductConfig(
 
 faithful = ProductConfig(
     name="faithful",
-    description="Lossless machine archive: one native JSON file per session",
+    description="JSON archive of extracted messages with their raw payloads",
     role_filter=None,
     include_tool_output=True,
     truncate_tool_output=None,
@@ -129,7 +129,7 @@ PRODUCTS: Dict[str, ProductConfig] = {
 
 PRESETS: Dict[str, Dict[str, Any]] = {
     "archive": {
-        "description": "Full backup: transcript, memory corpus and faithful raw session (heavy)",
+        "description": "Lossy overall: transcript, memory corpus and extracted-message archive",
         "products": {
             "transcript": {"tool_output": "full"},
             "memory": {"files": True},
@@ -137,46 +137,46 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         },
     },
     "quick": {
-        "description": "Faithful raw session only — one native JSON file per session (fast, compact)",
+        "description": "Lossy vs source JSONL: raw payloads for extracted messages only",
         "product": "faithful",
     },
     "study": {
-        "description": "Readable transcript plus searchable memory corpus, no raw copy (medium)",
+        "description": "Lossy: truncated transcript plus searchable text-only memory",
         "products": {
             "transcript": {"tool_output": "truncated"},
             "memory": {"files": True},
         },
     },
     "review": {
-        "description": "Transcript without reasoning plus faithful raw session (does not redact)",
+        "description": "Lossy overall: transcript plus extracted-message archive; no redaction",
         "products": {
             "transcript": {"no_reasoning": True},
             "faithful": {},
         },
     },
     "notes": {
-        "description": "Plain transcript with text truncated to ~500 chars (light)",
+        "description": "Lossy: plain transcript with text truncated to ~500 characters",
         "product": "transcript",
         "tool_output": "truncated",
     },
     "conversation": {
-        "description": "Dialogue only: no tools, patches or reasoning (light)",
+        "description": "Lossy: extracted user and assistant text only",
         "product": "transcript",
         "tool_output": "omit",
         "patch": "omit",
         "no_reasoning": True,
     },
     "prompts": {
-        "description": "User prompts only: no answers, reasoning or tools (task log)",
+        "description": "Lossy: user messages only",
         "product": "transcript",
         "role": "user",
     },
     "rag": {
-        "description": "Searchable memory corpus for retrieval (one JSON line per message)",
+        "description": "Lossy: role, timestamp, and extracted text for retrieval",
         "product": "memory",
     },
     "digest": {
-        "description": "Short extractive summaries of conversation messages",
+        "description": "Lossy: short excerpts from extracted conversation messages",
         "product": "digest",
     },
 }
