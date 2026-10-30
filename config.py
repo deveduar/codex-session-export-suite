@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import configparser
 import os
+import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 CONFIG_FILENAME = "codex_export.ini"
 
 DEFAULTS: Dict[str, Any] = {
-    "codex_dir": "~/.codex",
+    "codex_dir": None,
     "output_dir": "./codex_exports",
     "preset": None,
+    "products": None,
     "role": None,
     "truncate": None,
     "timestamps": True,
@@ -28,6 +30,14 @@ class ConfigError(Exception):
     """Raised when the configuration file is missing or invalid."""
 
 
+_PERCENT_VAR = re.compile(r"%([^%]+)%")
+
+
+def _expand_percent_vars(text: str) -> str:
+    """Expand Windows-style %NAME% variables on every platform."""
+    return _PERCENT_VAR.sub(lambda match: os.environ.get(match.group(1), match.group(0)), text)
+
+
 def expand_path(value: Optional[str]) -> Optional[Path]:
     """Expand ~ and environment variables in a path.
 
@@ -36,7 +46,7 @@ def expand_path(value: Optional[str]) -> Optional[Path]:
     if value is None:
         return None
 
-    text = os.path.expandvars(str(value))
+    text = os.path.expandvars(_expand_percent_vars(str(value)))
     return Path(text).expanduser()
 
 
@@ -63,7 +73,7 @@ def find_config(explicit: Optional[str] = None) -> Optional[Path]:
     if explicit:
         path = expand_path(explicit)
         if path is None or not path.is_file():
-            raise ConfigError(f"No existe el archivo de configuración: {explicit}")
+            raise ConfigError(f"Configuration file not found: {explicit}")
         return path
 
     local_config = Path.cwd() / CONFIG_FILENAME
@@ -75,6 +85,36 @@ def find_config(explicit: Optional[str] = None) -> Optional[Path]:
         return per_user_config
 
     return None
+
+
+def detect_codex_dir() -> Optional[Path]:
+    """Auto-detect the Codex data directory.
+
+    Precedence:
+        1. ``CODEX_HOME`` environment variable.
+        2. ``~/.codex`` (``%USERPROFILE%\\.codex`` on Windows).
+        3. ``$XDG_CONFIG_HOME/codex`` on non-Windows systems.
+    """
+    candidates: List[Path] = []
+
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        expanded = expand_path(codex_home)
+        if expanded:
+            candidates.append(expanded)
+
+    candidates.append(Path.home() / ".codex")
+
+    if os.name != "nt":
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            candidates.append(Path(xdg_config_home) / "codex")
+
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+
+    return candidates[0] if candidates else None
 
 
 def _get(parser: configparser.ConfigParser, section: str, *keys: str) -> Optional[str]:
@@ -92,29 +132,35 @@ def _get(parser: configparser.ConfigParser, section: str, *keys: str) -> Optiona
 
 def _parse_bool(value: str) -> bool:
     normalized = value.strip().lower()
-    if normalized in ("1", "true", "yes", "on", "si", "sí"):
+    if normalized in ("1", "true", "yes", "on"):
         return True
     if normalized in ("0", "false", "no", "off"):
         return False
-    raise ConfigError(f"Valor booleano no válido: {value!r}")
+    raise ConfigError(f"Invalid boolean value: {value!r}")
 
 
 def _parse_int(value: str) -> int:
     try:
         number = int(value)
     except ValueError as exc:
-        raise ConfigError(f"Valor numérico no válido: {value!r}") from exc
+        raise ConfigError(f"Invalid numeric value: {value!r}") from exc
 
     if number < 0:
-        raise ConfigError(f"El valor no puede ser negativo: {value!r}")
+        raise ConfigError(f"Value cannot be negative: {value!r}")
     return number
+
+
+def _parse_products(value: str) -> Optional[List[str]]:
+    """Parse a comma/space separated product list."""
+    products = value.replace(",", " ").split()
+    return products or None
 
 
 def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     """Load configuration merged over built-in defaults.
 
-    Precedence is handled by the CLI: command-line arguments override the
-    values returned here, and these values override the internal defaults.
+    Command-line arguments override the values returned here, and these
+    values override the internal defaults.
     """
     config = dict(DEFAULTS)
     config_path = find_config(explicit)
@@ -127,7 +173,7 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as handle:
             parser.read_file(handle)
     except (OSError, configparser.Error) as exc:
-        raise ConfigError(f"No se pudo leer {config_path}: {exc}") from exc
+        raise ConfigError(f"Could not read {config_path}: {exc}") from exc
 
     codex_dir = _get(parser, "codex", "dir", "path")
     if codex_dir:
@@ -140,6 +186,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     preset = _get(parser, "export", "preset", "default_preset")
     if preset:
         config["preset"] = preset
+
+    products = _get(parser, "export", "products")
+    if products:
+        config["products"] = _parse_products(products)
 
     role = _get(parser, "export", "role")
     if role:
@@ -166,6 +216,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_preset = _get(parser, section, "preset")
         if flat_preset:
             config["preset"] = flat_preset
+
+        flat_products = _get(parser, section, "products")
+        if flat_products:
+            config["products"] = _parse_products(flat_products)
 
         flat_role = _get(parser, section, "role")
         if flat_role:

@@ -1,164 +1,236 @@
 # Codex Extension Exporter
 
-Herramienta en Python para extraer y limpiar las conversaciones locales de la extensión de Codex en VS Code, convirtiéndolas en archivos Markdown, JSONL o JSON. Funciona en Linux y Windows.
+Portable Python tool to extract and export local Codex conversations as Markdown, JSONL, or JSON. It works on Linux and Windows and has no third-party dependencies.
+
+There is no installation step and no console alias. Run `cli.py` directly:
+
+- Linux/macOS: `python3 cli.py ...`
+- Windows: `py cli.py ...`
 
 ---
 
-## Instalación
+## Quick start
 
-### Linux
+Linux/macOS:
 
 ```bash
-python3 cli.py --help
-pip install -e .
-codex_export --help
+python3 cli.py --preset notes
 ```
 
-### Windows
+Windows CMD:
+
+```cmd
+py cli.py --preset notes
+```
+
+Windows PowerShell:
 
 ```powershell
-py cli.py --help
-py -m pip install -e .
-codex_export --help
+py cli.py --preset notes
 ```
 
-> **Importante:** `py codex_export` no funciona porque `py` espera un archivo `.py` o un módulo con `-m`. Usa `codex_export` después de instalarlo, `py cli.py ...` o `py -m cli ...`.
+By default, the tool auto-detects Codex in `CODEX_HOME` or `~/.codex` (`%USERPROFILE%\.codex` on Windows), so you do not need to pass a path every time.
 
 ---
 
-## Uso
+## Input path
 
-El primer argumento puede ser:
+The first argument can be:
 
-- la carpeta raíz de Codex (`~/.codex`)
-- la carpeta `sessions`
-- una subcarpeta de año/mes (`sessions/2026/10`)
-- un archivo `.jsonl` concreto
+- the Codex root directory
+- the `sessions` directory
+- a year/month subdirectory
+- a single `.jsonl` file
+
+Linux/macOS:
 
 ```bash
-# Carpeta raíz de Codex
-codex_export ~/.codex --preset transcript
-
-# Solo una sesión concreta
-codex_export ~/.codex/sessions/2026/10/30/rollout-2026-10-30T12-00-00-abc.jsonl
-
-# Subcarpeta de un mes
-codex_export ~/.codex/sessions/2026/10 --preset notes
-
-# Windows
-codex_export "%USERPROFILE%\.codex" --preset transcript
-codex_export "%USERPROFILE%\.codex" --preset transcript -o "%USERPROFILE%\codex_exports"
-codex_export "%USERPROFILE%\.codex\sessions\2026\10\30\rollout-2026-10-30T12-00-00-abc.jsonl"
-
-# Sin instalar nada
-python3 cli.py ~/.codex --preset transcript
-py cli.py "%USERPROFILE%\.codex" --preset transcript
+python3 cli.py --preset notes
+python3 cli.py ~/.codex --preset notes
+python3 cli.py ~/.codex/sessions/2026/10 --preset notes
+python3 cli.py ~/.codex/sessions/2026/10/30/rollout-2026-10-30T12-00-00-abc.jsonl
 ```
 
-El directorio de salida se indica con `-o/--output` y admite `~` y variables de entorno:
+Windows CMD:
 
-```bash
-codex_export ~/.codex -o ./mis_exportaciones
-codex_export ~/.codex -o "%USERPROFILE%\codex_exports"
+```cmd
+py cli.py --preset notes
+py cli.py "%USERPROFILE%\.codex" --preset notes
+py cli.py "%USERPROFILE%\.codex\sessions\2026\10" --preset notes
+py cli.py "%USERPROFILE%\.codex\sessions\2026\10\30\rollout-2026-10-30T12-00-00-abc.jsonl"
 ```
 
-### Presets disponibles
+Windows PowerShell:
 
-| Preset | Descripción | Salida actual |
-|--------|-------------|---------------|
-| `transcript` | Conversación completa en Markdown, en orden cronológico | `.md` |
-| `memory` | Corpus JSONL para RAG/alimentar otra IA | `.jsonl` |
-| `digest` | Resúmenes truncados | `.md` |
-| `faithful` | Archivo JSON lossless por sesión | `.json` |
-| `notes` | Lectura con tool output truncado | `.md` |
-| `conversation` | Solo diálogo, sin tools ni reasoning | `.md` |
-| `prompts` | Solo tus prompts | `.md` (solo USER) |
-| `review` | Log legible sin reasoning | `.md` |
-| `archive` | Backup completo (pendiente de formato propio) | `.md` |
-| `quick` | Sesión raw (pendiente de formato propio) | `.md` |
-| `study` | Log + corpus (pendiente de formato propio) | `.md` |
-| `rag` | Una línea por sesión (pendiente de formato propio) | `.md` |
+```powershell
+py cli.py --preset notes
+py cli.py "$env:USERPROFILE\.codex" --preset notes
+py cli.py "$env:USERPROFILE\.codex\sessions\2026\10" --preset notes
+```
 
-`archive`, `quick`, `study` y `rag` todavía producen Markdown; su formato específico queda pendiente.
+> `~` is expanded by Python, but cmd and PowerShell do not expand it. In Windows use `%USERPROFILE%` in CMD, `$env:USERPROFILE` in PowerShell, or omit the path and let auto-detection find Codex.
+
+---
+
+## Output directory
+
+Use `-o/--output` to choose where exported files are written:
+
+Linux/macOS:
 
 ```bash
-codex_export --list-presets
+python3 cli.py --preset notes -o ./codex_exports
+```
+
+Windows CMD:
+
+```cmd
+py cli.py --preset notes -o "%USERPROFILE%\codex_exports"
+```
+
+Windows PowerShell:
+
+```powershell
+py cli.py --preset notes -o "$env:USERPROFILE\codex_exports"
 ```
 
 ---
 
-## Configuración
+## Products and presets
 
-El archivo `codex_export.ini` permite cambiar los valores por defecto:
+A **product** is a single output format. A **preset** is a named combination of one or more products.
+
+### Products
+
+| Product | Description | Output |
+|---------|-------------|--------|
+| `transcript` | Full conversation in Markdown, in chronological order | `.md` |
+| `memory` | One JSON line per message for RAG or another AI | `.jsonl` |
+| `faithful` | Lossless JSON archive per session | `.json` |
+| `digest` | Short extractive summaries of conversation messages | `.md` |
+
+### Presets
+
+| Preset | Products | Description |
+|--------|----------|-------------|
+| `archive` | `transcript` + `memory` + `faithful` | Full backup: transcript, memory corpus and faithful raw session |
+| `quick` | `faithful` | Faithful raw session only |
+| `study` | `transcript` (truncated) + `memory` | Readable transcript plus searchable memory corpus |
+| `review` | `transcript` (no reasoning) + `faithful` | Transcript without reasoning plus faithful raw session |
+| `notes` | `transcript` (truncated) | Plain transcript with text truncated to ~500 chars |
+| `conversation` | `transcript` (dialogue only) | Dialogue only: no tools, patches or reasoning |
+| `prompts` | `transcript` (user only) | User prompts only |
+| `rag` | `memory` | Searchable memory corpus for retrieval |
+| `digest` | `digest` | Short extractive summaries of conversation messages |
+
+Examples:
+
+```bash
+# Expand a preset into its products
+python3 cli.py --preset archive
+
+# Export specific products
+python3 cli.py --products transcript memory faithful
+
+# Only user prompts
+python3 cli.py --products transcript --role user
+
+# Truncate text
+python3 cli.py --preset notes --truncate 300
+
+# List products and presets
+python3 cli.py --list-presets
+```
+
+`--products` accepts products only. `--preset` accepts presets only.
+
+Each product writes its own file type (`session_....md`, `memory_....jsonl`, `faithful_....json`, `digest_....md`), so products in the same preset do not overwrite each other.
+
+---
+
+## Auto-detection
+
+The Codex directory is resolved in this order:
+
+1. Path passed as the first argument.
+2. `dir` in `codex_export.ini`.
+3. `CODEX_HOME` environment variable.
+4. `~/.codex` (`%USERPROFILE%\.codex` on Windows).
+5. `$XDG_CONFIG_HOME/codex` on non-Windows systems.
+
+The detected directory is printed when the export starts. If the detected directory has no sessions, pass the correct path explicitly or set it in the config file.
+
+---
+
+## Configuration
+
+`codex_export.ini` changes the defaults:
 
 ```ini
 [codex]
-# Carpeta raíz, sessions, subcarpeta o .jsonl
-dir = ~/.codex
-# Windows: dir = %USERPROFILE%\.codex
+# Leave empty to auto-detect CODEX_HOME or ~/.codex.
+# Windows example: dir = %USERPROFILE%\.codex
+dir =
 
 [output]
 dir = ./codex_exports
 
 [export]
-preset = transcript
-# user, assistant o both. Vacío = sin filtro.
+# Leave empty to use the transcript product.
+preset =
+# Explicit products, separated by commas or spaces.
+products =
+# user, assistant, or both. Leave empty for no filter.
 role =
-# Truncar a N caracteres. Vacío = sin truncar.
+# Truncate text to N characters. Leave empty for no truncation.
 truncate =
 timestamps = true
 ```
 
-Precedencia: **argumentos de la CLI > archivo de configuración > valores internos**.
+Precedence: **CLI arguments > config file > built-in defaults**.
 
-Ubicaciones que se buscan automáticamente:
+If both `preset` and `products` are set, `products` wins.
 
-1. `./codex_export.ini` en el directorio actual.
-2. Configuración por usuario:
+Configuration locations searched automatically:
+
+1. `./codex_export.ini` in the current directory.
+2. Per-user config:
    - Windows: `%APPDATA%\codex_exporter\config.ini`
    - Linux: `~/.config/codex_exporter/config.ini`
 
-También puedes indicar un archivo concreto:
+Use a specific file with:
 
 ```bash
-codex_export --config ./mi_config.ini
+python3 cli.py --config ./my_config.ini
 ```
 
-Los valores admiten `~`, `$HOME` y `%USERPROFILE%`. En INI, escribe las rutas de Windows sin comillas.
+Paths accept `~`, `$HOME`, and `%USERPROFILE%`. In INI files, write Windows paths without quotes.
 
 ---
 
-## Opciones de línea de comandos
+## CLI options
 
 ```
-posicionales:
-  codex_dir             Carpeta Codex, carpeta sessions, subcarpeta o .jsonl
+positional arguments:
+  codex_dir             Codex directory, sessions directory, subdirectory, or .jsonl file
 
-opciones:
-  -h, --help            Muestra la ayuda
-  -o, --output DIR      Directorio de salida (default: config o ./codex_exports)
-  --config FILE         Archivo INI de configuración
-  -p, --preset PRESET   Preset de exportación
-  --products NAME...    transcript, memory, digest, faithful o cualquier preset
-  --role ROLE           user, assistant o both
-  --truncate N          Trunca el texto a N caracteres (0 = sin truncar)
-  --no-timestamps       Oculta los timestamps
-  --dry-run             Muestra lo que haría sin escribir archivos
-  --list-presets        Lista productos y presets
-  --version             Muestra la versión
+options:
+  -h, --help            Show help
+  -o, --output DIR      Output directory (default: config or ./codex_exports)
+  --config FILE         INI configuration file
+  -p, --preset PRESET   Export preset
+  --products NAME...    Products to export
+  --role ROLE           user, assistant, or both
+  --truncate N          Truncate text to N characters (0 disables truncation)
+  --no-timestamps       Hide timestamps
+  --dry-run             Show what would be done without writing files
+  --list-presets        List products and presets
+  --version             Show version
 ```
-
-Se pueden generar varios productos a la vez:
-
-```bash
-codex_export ~/.codex --products transcript memory faithful
-```
-
-Si pides varios productos que generan Markdown, se añade el nombre del producto al archivo para evitar que se sobrescriban (por ejemplo `notes_....md` y `prompts_....md`).
 
 ---
 
-## Ubicación de datos de Codex
+## Codex data locations
 
 Linux:
 
@@ -182,43 +254,48 @@ Windows:
 └── config.toml
 ```
 
-Por ahora solo se leen las sesiones de `sessions/`. Las conversaciones archivadas en `archived_sessions/` no se procesan automáticamente, aunque puedes pasar esa carpeta o un archivo concreto como primer argumento.
+Only sessions under `sessions/` are read automatically. Archived conversations in `archived_sessions/` are not processed by default, but you can pass that directory or a specific `.jsonl` file as the first argument.
 
 ---
 
-## Uso en Windows y Linux sobre el mismo repositorio
+## Using the same repository on Windows and Linux
 
-No hay conflicto por el código ni por la configuración por defecto:
+- There is no installation step; run `cli.py` from the repository on each system.
+- `codex_exports/` is ignored by Git, so exported files are not committed.
+- The default output is `./codex_exports`, relative to the directory where you run the command.
+- Filenames are sanitized for Windows-invalid characters.
 
-- `codex_exports/` está en `.gitignore`, así que no se sube al repositorio.
-- La salida por defecto es `./codex_exports` relativa al directorio desde el que ejecutes el comando.
-- Los nombres de archivo se sanean para evitar caracteres inválidos de Windows.
+If both systems write to the same shared output directory and export the same session, the file is overwritten because the name is deterministic. Use a different output directory per system:
 
-Si compartes la misma carpeta de salida entre Windows y Linux y exportas la misma sesión en ambos, el archivo se sobrescribe porque el nombre es determinista. Para evitarlo, usa una salida distinta en cada sistema:
+Linux/macOS:
 
 ```bash
-codex_export ~/.codex -o ./codex_exports/linux
-codex_export "%USERPROFILE%\.codex" -o "%USERPROFILE%\codex_exports\windows"
+python3 cli.py --preset notes -o ./codex_exports/linux
+```
+
+Windows CMD:
+
+```cmd
+py cli.py --preset notes -o "%USERPROFILE%\codex_exports\windows"
 ```
 
 ---
 
-## Estructura del repositorio
+## Repository structure
 
 ```
 codex_extension_exporter/
-├── cli.py              # Punto de entrada y CLI
-├── config.py           # Lectura de codex_export.ini
-├── extract.py          # Parsing de JSONL y filtrado
-├── products.py         # Productos y presets
-├── output.py           # Formatos Markdown, JSONL y JSON
-├── codex_export.ini    # Configuración por defecto
-├── pyproject.toml
+├── cli.py              # Entry point and CLI
+├── config.py           # INI loading and Codex auto-detection
+├── extract.py          # JSONL parsing and filtering
+├── products.py         # Products and presets
+├── output.py           # Markdown, JSONL, and JSON formatting
+├── codex_export.ini    # Default configuration
 └── README.md
 ```
 
 ---
 
-## Licencia
+## License
 
-Consulta el archivo `private.txt` para detalles de configuración privada.
+No license file is included in this repository.

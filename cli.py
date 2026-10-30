@@ -1,6 +1,7 @@
 """CLI entry point for Codex Extension Exporter.
 
-Provides multiple export modes (presets) for Codex session JSONL files.
+Provides portable exports for Codex session JSONL files using products and
+presets.
 """
 
 from __future__ import annotations
@@ -11,35 +12,25 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from config import ConfigError, expand_path, load_config
+from config import ConfigError, detect_codex_dir, expand_path, load_config
 from extract import extract_messages_from_jsonl
 from output import (
     format_digest_summary,
     format_faithful_json,
     format_jsonl_memory,
-    format_markdown_conversation,
     format_markdown_transcript,
 )
 from products import (
-    PRESETS,
     ProductConfig,
-    digest,
-    faithful,
     get_preset,
+    get_product,
     list_presets,
-    memory,
-    transcript,
+    list_products,
+    resolve_preset,
 )
 
 
-VERSION = "2.1.0"
-
-PRODUCTS: Dict[str, ProductConfig] = {
-    "transcript": transcript,
-    "memory": memory,
-    "digest": digest,
-    "faithful": faithful,
-}
+VERSION = "2.2.0"
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -66,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="codex_export",
         description="Extract and export Codex conversation sessions from VS Code.",
-        epilog="Supported presets: archive, quick, study, review, notes, conversation, prompts, rag, digest_only",
+        epilog="Presets: " + ", ".join(list_presets()),
     )
 
     parser.add_argument(
@@ -74,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         nargs="?",
         default=None,
-        help="Codex directory, sessions directory, subdirectory or a single .jsonl file (default: config or ~/.codex)",
+        help="Codex directory, sessions directory, subdirectory or a single .jsonl file (default: auto-detect)",
     )
 
     parser.add_argument(
@@ -97,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--preset",
         type=str,
         default=None,
-        help=f"Export preset: {', '.join(PRESETS.keys())} or transcript/memory/digest/faithful",
+        help=f"Export preset: {', '.join(list_presets())}",
     )
 
     parser.add_argument(
@@ -105,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         nargs="+",
         default=None,
-        help="Custom products: transcript, memory, digest, faithful or any preset name",
+        help=f"Products to export: {', '.join(list_products())}",
     )
 
     parser.add_argument(
@@ -119,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--truncate",
         type=int,
         default=None,
-        help="Truncate tool output to N characters (0 disables truncation)",
+        help="Truncate text to N characters (0 disables truncation)",
     )
 
     parser.add_argument(
@@ -140,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-presets",
         action="store_true",
         default=False,
-        help="List available export presets",
+        help="List available products and presets",
     )
 
     parser.add_argument(
@@ -165,7 +156,7 @@ def sanitize_filename(name: str) -> str:
     return safe[:180].rstrip(". ") or "session"
 
 
-def discover_sessions(codex_dir: str) -> List[Path]:
+def discover_sessions(codex_path: Optional[Path]) -> List[Path]:
     """Discover .jsonl session files.
 
     Accepts:
@@ -174,7 +165,6 @@ def discover_sessions(codex_dir: str) -> List[Path]:
         - a year/month subdirectory
         - a single ``.jsonl`` file
     """
-    codex_path = expand_path(codex_dir)
     if codex_path is None or not codex_path.exists():
         return []
 
@@ -236,18 +226,17 @@ def get_display_name(file_path: Path) -> str:
     return sanitize_filename("-".join(name_parts) if name_parts else file_path.stem)
 
 
-def resolve_product_config(name: str) -> ProductConfig:
-    """Resolve a product/preset name to a ProductConfig."""
-    normalized = str(name).strip().lower()
+def preset_product_names(name: str) -> List[str]:
+    """Return the product names used by a preset."""
+    preset = get_preset(name)
 
-    if normalized in PRODUCTS:
-        return PRODUCTS[normalized]
+    if "products" in preset:
+        return list(preset["products"])
 
-    if normalized in PRESETS:
-        return get_preset(normalized)
+    if "product" in preset:
+        return [preset["product"]]
 
-    available = ", ".join(list(PRODUCTS) + list(PRESETS))
-    raise KeyError(f"'{name}' no es un producto/preset reconocido. Disponibles: {available}")
+    return []
 
 
 def apply_overrides(
@@ -255,7 +244,7 @@ def apply_overrides(
     role: Optional[str] = None,
     truncate: Optional[int] = None,
 ) -> ProductConfig:
-    """Apply CLI/config overrides without mutating global presets."""
+    """Apply CLI/config overrides without mutating global products."""
     overrides: Dict[str, object] = {}
 
     if role:
@@ -267,7 +256,7 @@ def apply_overrides(
             overrides["role_filter"] = [normalized_role]
             overrides["role"] = None
         else:
-            raise ValueError(f"Rol no válido: '{role}'. Usa user, assistant o both.")
+            raise ValueError(f"Invalid role: '{role}'. Use user, assistant or both.")
 
     if truncate is not None:
         overrides["truncate_tool_output"] = truncate if truncate > 0 else None
@@ -275,17 +264,8 @@ def apply_overrides(
     return product_config.clone(**overrides) if overrides else product_config
 
 
-def output_path_for(
-    product_name: str,
-    display_name: str,
-    output_dir: Path,
-    include_product: bool = False,
-) -> Path:
-    """Return the output file path for a product.
-
-    When several products are requested at once, non-default products get
-    their name in the filename so they do not overwrite each other.
-    """
+def output_path_for(product_name: str, display_name: str, output_dir: Path) -> Path:
+    """Return the output file path for a product."""
     if product_name == "memory":
         return output_dir / f"memory_{display_name}.jsonl"
     if product_name == "faithful":
@@ -293,12 +273,7 @@ def output_path_for(
     if product_name == "digest":
         return output_dir / f"digest_{display_name}.md"
 
-    if include_product and product_name != "transcript":
-        prefix = f"{product_name}_"
-    else:
-        prefix = "session_"
-
-    return output_dir / f"{prefix}{display_name}.md"
+    return output_dir / f"session_{display_name}.md"
 
 
 def process_session(
@@ -307,23 +282,17 @@ def process_session(
     output_dir: Path,
     no_timestamps: bool = False,
     dry_run: bool = False,
-    include_product: bool = False,
 ) -> None:
     """Process a single session file and generate output."""
     display_name = get_display_name(file_path)
     messages = extract_messages_from_jsonl(file_path)
 
     if not messages:
-        print(f"[*] No se encontraron mensajes en {file_path.name}")
+        print(f"[*] No messages found in {file_path.name}")
         return
 
     product_name = getattr(product_config, "name", "transcript")
-    output_file = output_path_for(
-        product_name,
-        display_name,
-        output_dir,
-        include_product=include_product,
-    )
+    output_file = output_path_for(product_name, display_name, output_dir)
 
     if dry_run:
         print(f"[*] {product_name}: {file_path.name} -> {output_file}")
@@ -331,10 +300,7 @@ def process_session(
 
     filtered = product_config.apply(messages)
 
-    if product_name == "conversation":
-        content = format_markdown_conversation(filtered, display_name)
-        label = "Markdown conversación"
-    elif product_name in ("transcript", "notes", "review"):
+    if product_name == "transcript":
         content = format_markdown_transcript(
             filtered,
             filename=display_name,
@@ -343,27 +309,39 @@ def process_session(
         label = "Markdown"
     elif product_name == "memory":
         content = format_jsonl_memory(filtered, display_name)
-        label = "JSONL memoria"
+        label = "Memory JSONL"
     elif product_name == "faithful":
         content = format_faithful_json(filtered, display_name)
-        label = "JSON fiel"
+        label = "Faithful JSON"
     elif product_name == "digest":
         max_chars = getattr(product_config, "truncate_tool_output", 500) or 500
         content = format_digest_summary(filtered, display_name, max_chars=max_chars)
-        label = "Resumen digest"
+        label = "Digest summary"
     else:
         content = format_markdown_transcript(
             filtered,
             filename=display_name,
             include_timestamps=not no_timestamps,
         )
-        label = "Markdown (predeterminado)"
+        label = "Markdown (default)"
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as handle:
         handle.write(content)
 
-    print(f"[+] {label} exportado: {output_file.name}")
+    print(f"[+] {label} exported: {output_file.name}")
+
+
+def _resolve_codex_dir(explicit: Optional[str], config: Dict[str, object]) -> Optional[Path]:
+    """Resolve the Codex directory from CLI, config, environment or auto-detect."""
+    if explicit:
+        return expand_path(explicit)
+
+    configured_dir = config.get("codex_dir")
+    if configured_dir:
+        return expand_path(str(configured_dir))
+
+    return detect_codex_dir()
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -373,14 +351,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.list_presets:
-        print("Productos disponibles:")
-        for product_name, product in PRODUCTS.items():
+        print("Products:")
+        for product_name in list_products():
+            product = get_product(product_name)
             print(f"  - {product_name}: {product.description}")
+
         print()
-        print("Presets disponibles:")
+        print("Presets:")
         for preset_name in list_presets():
             preset = get_preset(preset_name)
-            print(f"  - {preset_name}: {preset.description}")
+            products = ", ".join(preset_product_names(preset_name))
+            print(f"  - {preset_name}: {preset['description']}")
+            print(f"    products: {products}")
+
         return 0
 
     try:
@@ -389,7 +372,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[!] {exc}")
         return 1
 
-    codex_dir = args.codex_dir if args.codex_dir is not None else config["codex_dir"]
+    codex_path = _resolve_codex_dir(args.codex_dir, config)
     output_value = args.output if args.output is not None else config["output_dir"]
     role = args.role if args.role is not None else config["role"]
     truncate = args.truncate if args.truncate is not None else config["truncate"]
@@ -400,20 +383,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         no_timestamps = args.no_timestamps
 
     if truncate is not None and truncate < 0:
-        print("[!] --truncate no puede ser negativo.")
+        print("[!] --truncate cannot be negative.")
         return 1
 
     try:
         if args.products:
-            product_configs = [resolve_product_config(name) for name in args.products]
+            product_configs = [get_product(name) for name in args.products]
+        elif args.preset:
+            product_configs = resolve_preset(args.preset)
+        elif config.get("products"):
+            product_configs = [get_product(name) for name in config["products"]]
+        elif config.get("preset"):
+            product_configs = resolve_preset(str(config["preset"]))
         else:
-            preset_name = args.preset if args.preset is not None else config["preset"]
-            product_configs = [
-                resolve_product_config(preset_name) if preset_name else transcript
-            ]
-    except KeyError as exc:
+            product_configs = [get_product("transcript")]
+    except (KeyError, ValueError) as exc:
         print(f"[!] Error: {exc}")
-        print("Use --list-presets para ver las opciones disponibles.")
+        print("Use --list-presets to see available options.")
         return 1
 
     try:
@@ -425,26 +411,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[!] Error: {exc}")
         return 1
 
-    jsonl_files = discover_sessions(codex_dir)
+    if codex_path is None:
+        print("[!] Could not auto-detect the Codex directory.")
+        print("  Pass it as the first argument or set it in codex_export.ini.")
+        return 1
+
+    jsonl_files = discover_sessions(codex_path)
     if not jsonl_files:
-        print(f"[!] No se encontraron archivos .jsonl en: {expand_path(codex_dir)}")
-        print("  Asegúrate de pasar la carpeta de Codex, sessions, un subdirectorio o un .jsonl.")
+        print(f"[!] No .jsonl files found in: {codex_path}")
+        print("  Pass the Codex directory, sessions directory, a subdirectory, or a .jsonl file.")
         return 1
 
     output_dir = expand_path(output_value) or Path("./codex_exports")
     config_path = config.get("_config_path")
     if config_path:
-        print(f"[*] Configuración: {config_path}")
+        print(f"[*] Configuration: {config_path}")
 
-    print(f"[*] Se encontraron {len(jsonl_files)} archivos de sesión. Procesando...")
+    print(f"[*] Codex directory: {codex_path}")
+    print(f"[*] Found {len(jsonl_files)} session files. Processing...")
     if len(product_configs) > 1:
         names = ", ".join(product.name for product in product_configs)
-        print(f"[*] Productos: {names}")
+        print(f"[*] Products: {names}")
     print()
 
-    include_product = len(product_configs) > 1
     for index, file_path in enumerate(jsonl_files, 1):
-        print(f"[{index}/{len(jsonl_files)}] Procesando: {file_path.name}")
+        print(f"[{index}/{len(jsonl_files)}] Processing: {file_path.name}")
         for product_config in product_configs:
             process_session(
                 file_path,
@@ -452,14 +443,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 output_dir,
                 no_timestamps=no_timestamps,
                 dry_run=args.dry_run,
-                include_product=include_product,
             )
 
     print()
     if args.dry_run:
-        print(f"Simulación completa. Se escribiría en: {output_dir.absolute()}")
+        print(f"Dry run complete. Output would be written to: {output_dir.absolute()}")
     else:
-        print(f"¡Extracción completa! Revisa tu contenido en: {output_dir.absolute()}")
+        print(f"Export complete. Check your files in: {output_dir.absolute()}")
 
     return 0
 

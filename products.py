@@ -1,22 +1,16 @@
-"""Product presets and configurations for Codex export modes.
+"""Products and presets for Codex export modes.
 
-Based on the "four products" matrix: transcript, memory, digest, faithful.
-Each product defines how to transform raw messages into the desired output format.
+Products are the actual output formats. Presets are named combinations of one
+or more products, with optional per-product settings.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from extract import detect_role, extract_text_from_content, filter_payload
-
-
-# ---------------------------------------------------------------------------
-# Product definitions – what each product type extracts and how
-# ---------------------------------------------------------------------------
 
 class ProductConfig:
-    """Configuration for a single export product type."""
+    """Configuration for a single export product."""
 
     def __init__(
         self,
@@ -26,21 +20,18 @@ class ProductConfig:
         include_tool_output: bool = True,
         truncate_tool_output: Optional[int] = None,
         no_reasoning: bool = False,
-        role: Optional[str] = None,  # Force specific role (e.g. "user" only)
+        role: Optional[str] = None,
     ):
         self.name = name
         self.description = description
-        self.role_filter = role_filter or []  # e.g. ["user"], ["assistant"]
+        self.role_filter = role_filter or []
         self.include_tool_output = include_tool_output
-        self.truncate_tool_output = truncate_tool_output  # chars, None = full
-        self.no_reasoning = no_reasoning  # strip tool/output reasoning blocks
-        self.role = role  # Force single role filter
+        self.truncate_tool_output = truncate_tool_output
+        self.no_reasoning = no_reasoning
+        self.role = role
 
     def clone(self, **overrides: Any) -> "ProductConfig":
-        """Return a copy with optional overrides.
-
-        Used so CLI flags do not mutate the global preset objects.
-        """
+        """Return a copy with optional overrides."""
         values = {
             "name": self.name,
             "description": self.description,
@@ -54,38 +45,29 @@ class ProductConfig:
         return ProductConfig(**values)
 
     def apply(self, messages: List[dict]) -> List[dict]:
-        """Apply product filtering to a list of messages.
-
-        Returns a filtered list suitable for this product type.
-        """
+        """Apply product filtering to a list of messages."""
         result = []
 
         for msg in messages:
             role = msg["role"]
 
-            # Force single-role filter if configured
             if self.role and role != self.role:
                 continue
 
-            # Role filter inclusion
             if self.role_filter and role not in self.role_filter:
                 continue
 
-            # Extract and optionally truncate text
             text = msg["text"]
             if self.truncate_tool_output and len(text) > self.truncate_tool_output:
                 text = text[: self.truncate_tool_output] + "..."
 
-            # Build output message
             out = {
                 "role": role,
                 "timestamp": msg.get("timestamp", ""),
                 "text": text,
             }
 
-            # Include/exclude tool/output data based on product config
             if self.include_tool_output and not self.no_reasoning:
-                # Keep raw payload for faithful/transcript modes
                 out["raw_payload"] = msg.get("raw_payload", {})
 
             result.append(out)
@@ -94,160 +76,215 @@ class ProductConfig:
 
 
 # ---------------------------------------------------------------------------
-# Pre-configured product presets (the "four products" matrix)
+# Base products
 # ---------------------------------------------------------------------------
 
-#: Transcript product – full conversation in Markdown
 transcript = ProductConfig(
     name="transcript",
-    description="Full conversation in Markdown (text + tools + patches + digests)",
-    role_filter=None,  # Include all roles
+    description="Conversation messages in Markdown, in chronological order",
+    role_filter=None,
     include_tool_output=True,
-    truncate_tool_output=None,  # Full text
+    truncate_tool_output=None,
     no_reasoning=False,
 )
 
-#: Memory product – corpus.jsonl format for RAG/feeding another AI
 memory = ProductConfig(
     name="memory",
-    description="corpus.jsonl — one JSON line per root session (goal, outcome, digests, metadata)",
+    description="One JSON line per message for RAG or another AI",
     role_filter=None,
     include_tool_output=False,
     truncate_tool_output=None,
-    no_reasoning=True,  # Strip reasoning for clean corpus
-)
-
-#: Digest product – only compacted-context digests
-digest = ProductConfig(
-    name="digest",
-    description="Only the compacted-context digests (knowledge arc)",
-    role_filter=None,
-    include_tool_output=False,
-    truncate_tool_output=500,  # Truncated summaries
     no_reasoning=True,
 )
 
-#: Faithful product – lossless machine archive
+digest = ProductConfig(
+    name="digest",
+    description="Short extractive summaries of conversation messages",
+    role_filter=None,
+    include_tool_output=False,
+    truncate_tool_output=500,
+    no_reasoning=True,
+)
+
 faithful = ProductConfig(
     name="faithful",
-    description="Lossless machine archive: one native JSON file per session (all messages, parts, reasoning)",
+    description="Lossless machine archive: one native JSON file per session",
     role_filter=None,
     include_tool_output=True,
     truncate_tool_output=None,
     no_reasoning=False,
 )
 
-# Convenience presets matching the matrix from the design
-
-PRESETS: Dict[str, ProductConfig] = {
-    # Archive: full backup — complete tool outputs and the raw session
-    "archive": ProductConfig(
-        name="archive",
-        description="Full backup — complete tool outputs and the raw session, with touched-file lists (heavy)",
-        role_filter=None,
-        include_tool_output=True,
-        truncate_tool_output=None,
-        no_reasoning=False,
-    ),
-    # Quick: raw session losslessly — one native-JSON file per session (fast, compact)
-    "quick": ProductConfig(
-        name="quick",
-        description="The raw session, losslessly — one native-JSON file per session (fast, compact)",
-        role_filter=None,
-        include_tool_output=True,
-        truncate_tool_output=None,
-        no_reasoning=False,
-    ),
-    # Study: readable log plus searchable corpus, no raw copy (medium)
-    "study": ProductConfig(
-        name="study",
-        description="A readable log plus a searchable corpus, no raw copy (medium)",
-        role_filter=None,
-        include_tool_output=False,
-        truncate_tool_output=500,
-        no_reasoning=True,
-    ),
-    # Review: readable log without reasoning, plus the raw session (does not redact)
-    "review": ProductConfig(
-        name="review",
-        description="The readable log without reasoning, plus the raw session (does not redact)",
-        role_filter=None,
-        include_tool_output=True,
-        truncate_tool_output=None,
-        no_reasoning=True,
-    ),
-    # Notes: plain read — every message, tool output truncated to ~500 chars (light)
-    "notes": ProductConfig(
-        name="notes",
-        description="Plain read — every message, tool output truncated to ~500 chars (light)",
-        role_filter=None,
-        include_tool_output=True,
-        truncate_tool_output=500,
-        no_reasoning=False,
-    ),
-    # Conversation: dialogue only — no tools, patches or reasoning (light)
-    "conversation": ProductConfig(
-        name="conversation",
-        description="The dialogue only — no tools, patches or reasoning (light)",
-        role_filter=None,
-        include_tool_output=False,
-        truncate_tool_output=None,
-        no_reasoning=True,
-    ),
-    # Prompts: just your prompts — no answers, reasoning or tools (task log)
-    "prompts": ProductConfig(
-        name="prompts",
-        description="Just your prompts — no answers, reasoning or tools (task log)",
-        role_filter=["user"],  # Only user messages
-        include_tool_output=False,
-        truncate_tool_output=None,
-        no_reasoning=True,
-    ),
-    # RAG: one line per session — tokens, asks, todos, tools and digests (summary)
-    "rag": ProductConfig(
-        name="rag",
-        description="One line per session — tokens, asks, tools and digests (summary)",
-        role_filter=None,
-        include_tool_output=False,
-        truncate_tool_output=200,
-        no_reasoning=True,
-    ),
-    # Digest: only the compaction summaries (knowledge arc)
-    "digest_only": ProductConfig(
-        name="digest",
-        description="Only the compaction summaries (knowledge arc)",
-        role_filter=None,
-        include_tool_output=False,
-        truncate_tool_output=300,
-        no_reasoning=True,
-    ),
+PRODUCTS: Dict[str, ProductConfig] = {
+    "transcript": transcript,
+    "memory": memory,
+    "faithful": faithful,
+    "digest": digest,
 }
 
 
-def get_preset(name: str) -> ProductConfig:
-    """Get a product preset by name.
+# ---------------------------------------------------------------------------
+# Presets: named combinations of products
+# ---------------------------------------------------------------------------
 
-    Args:
-        name: Preset name (archive, quick, study, review, notes, conversation, prompts, rag, digest)
+PRESETS: Dict[str, Dict[str, Any]] = {
+    "archive": {
+        "description": "Full backup: transcript, memory corpus and faithful raw session (heavy)",
+        "products": {
+            "transcript": {"tool_output": "full"},
+            "memory": {"files": True},
+            "faithful": {},
+        },
+    },
+    "quick": {
+        "description": "Faithful raw session only — one native JSON file per session (fast, compact)",
+        "product": "faithful",
+    },
+    "study": {
+        "description": "Readable transcript plus searchable memory corpus, no raw copy (medium)",
+        "products": {
+            "transcript": {"tool_output": "truncated"},
+            "memory": {"files": True},
+        },
+    },
+    "review": {
+        "description": "Transcript without reasoning plus faithful raw session (does not redact)",
+        "products": {
+            "transcript": {"no_reasoning": True},
+            "faithful": {},
+        },
+    },
+    "notes": {
+        "description": "Plain transcript with text truncated to ~500 chars (light)",
+        "product": "transcript",
+        "tool_output": "truncated",
+    },
+    "conversation": {
+        "description": "Dialogue only: no tools, patches or reasoning (light)",
+        "product": "transcript",
+        "tool_output": "omit",
+        "patch": "omit",
+        "no_reasoning": True,
+    },
+    "prompts": {
+        "description": "User prompts only: no answers, reasoning or tools (task log)",
+        "product": "transcript",
+        "role": "user",
+    },
+    "rag": {
+        "description": "Searchable memory corpus for retrieval (one JSON line per message)",
+        "product": "memory",
+    },
+    "digest": {
+        "description": "Short extractive summaries of conversation messages",
+        "product": "digest",
+    },
+}
 
-    Returns:
-        ProductConfig instance
 
-    Raises:
-        KeyError: If preset name is not found
-    """
+def get_product(name: str) -> ProductConfig:
+    """Get a base product by name."""
+    if name not in PRODUCTS:
+        available = ", ".join(PRODUCTS.keys())
+        raise KeyError(f"Unknown product '{name}'. Available: {available}")
+    return PRODUCTS[name]
+
+
+def get_preset(name: str) -> Dict[str, Any]:
+    """Get a preset definition by name."""
     if name not in PRESETS:
         available = ", ".join(PRESETS.keys())
         raise KeyError(f"Unknown preset '{name}'. Available: {available}")
     return PRESETS[name]
 
 
+def list_products() -> List[str]:
+    """List all product names."""
+    return list(PRODUCTS.keys())
+
+
 def list_presets() -> List[str]:
-    """List all available preset names."""
+    """List all preset names."""
     return list(PRESETS.keys())
 
 
-# Alias for backwards compatibility / quick access
+def _apply_product_options(product: ProductConfig, options: Dict[str, Any]) -> ProductConfig:
+    """Apply preset options to a product without mutating the base product."""
+    options = options or {}
+    overrides: Dict[str, Any] = {}
+
+    tool_output = options.get("tool_output")
+    if tool_output == "full":
+        overrides["include_tool_output"] = True
+        overrides["truncate_tool_output"] = None
+    elif tool_output == "truncated":
+        overrides["include_tool_output"] = True
+        overrides["truncate_tool_output"] = 500
+    elif tool_output == "omit":
+        overrides["include_tool_output"] = False
+        overrides["truncate_tool_output"] = None
+    elif isinstance(tool_output, int):
+        overrides["include_tool_output"] = True
+        overrides["truncate_tool_output"] = tool_output if tool_output > 0 else None
+    elif tool_output is not None:
+        raise ValueError(f"Invalid tool_output option: {tool_output!r}")
+
+    if "truncate" in options:
+        value = options["truncate"]
+        if value is None:
+            overrides["truncate_tool_output"] = None
+        elif isinstance(value, int):
+            overrides["truncate_tool_output"] = value if value > 0 else None
+        else:
+            raise ValueError(f"Invalid truncate option: {value!r}")
+
+    if "no_reasoning" in options:
+        overrides["no_reasoning"] = bool(options["no_reasoning"])
+
+    if "role" in options:
+        role = str(options["role"]).strip().lower()
+        if role == "both":
+            overrides["role_filter"] = []
+            overrides["role"] = None
+        elif role in ("user", "assistant"):
+            overrides["role_filter"] = [role]
+            overrides["role"] = None
+        else:
+            raise ValueError(f"Invalid role option: {options['role']!r}")
+
+    # "files" and "patch" are reserved for a future extraction phase.
+    return product.clone(**overrides) if overrides else product
+
+
+def resolve_preset(name: str) -> List[ProductConfig]:
+    """Expand a preset into one or more concrete product configurations."""
+    preset = get_preset(name)
+
+    if "products" in preset and "product" in preset:
+        raise ValueError(f"Preset '{name}' cannot define both 'product' and 'products'")
+
+    if "products" in preset:
+        product_specs = preset["products"]
+    elif "product" in preset:
+        product_name = preset["product"]
+        options = {
+            key: value
+            for key, value in preset.items()
+            if key not in ("description", "product", "products")
+        }
+        product_specs = {product_name: options}
+    else:
+        raise ValueError(f"Preset '{name}' does not define a product")
+
+    resolved = []
+    for product_name, options in product_specs.items():
+        product = get_product(product_name)
+        resolved.append(_apply_product_options(product, options or {}))
+
+    return resolved
+
+
+# Aliases for quick access
 transcript_product = transcript
 memory_product = memory
 digest_product = digest

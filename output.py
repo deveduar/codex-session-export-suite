@@ -30,7 +30,7 @@ def format_markdown_transcript(
     lines = []
     
     # Header
-    lines.append(f"# Historial Codex: `{filename}`")
+    lines.append(f"# Codex History: `{filename}`")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -41,7 +41,7 @@ def format_markdown_transcript(
         if not show_role:
             header = ">"
         else:
-            label = "Usuario" if role == "user" else "Codex" if role == "assistant" else str(role or "Mensaje")
+            label = "User" if role == "user" else "Codex" if role == "assistant" else str(role or "Message")
             header = f"> **{label}**"
 
         if include_timestamps and msg.get("timestamp"):
@@ -71,14 +71,14 @@ def format_markdown_conversation(
     Returns:
         Markdown-formatted string
     """
-    lines = [f"# Historial Codex: `{filename}`"]
+    lines = [f"# Codex History: `{filename}`"]
     lines.append("")
     lines.append("---\n")
     
     for i, msg in enumerate(messages, 1):
-        role_emoji = "👤" if msg.get("role") == "user" else "🤖"
+        label = "User" if msg.get("role") == "user" else "Codex"
         timestamp_part = f" *({msg.get('timestamp', '')})*" if msg.get("timestamp") else ""
-        lines.append(f"### {role_emoji} Mensaje {i}{timestamp_part}\n\n")
+        lines.append(f"### {label} - Message {i}{timestamp_part}\n\n")
         lines.append(f"{msg['text']}\n\n")
         lines.append("---\n")
     
@@ -169,4 +169,4 @@ def format_digest_summary(
             text += "..."
         summaries.append(text)
     
-    return f"## Sesión: {session_name}\n\n" + "\n\n".join(summaries)
+    return f"## Session: {session_name}\n\n" + "\n\n".join(summaries)
