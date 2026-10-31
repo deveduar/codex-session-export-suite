@@ -14,17 +14,17 @@ from extract import read_session_metadata
 
 
 PRODUCT_TITLES = {
-    "transcript": "Transcript",
-    "memory": "Memory",
+    "transcript": "Transcript with Tool Activity",
+    "conversation": "Conversation Only",
+    "memory": "RAG Events",
     "faithful": "Source JSONL",
-    "trace": "Activity Trace",
 }
 
 PRODUCT_EXTENSIONS = {
     "transcript": ".md",
+    "conversation": ".md",
     "memory": ".jsonl",
     "faithful": ".jsonl",
-    "trace": ".md",
 }
 
 

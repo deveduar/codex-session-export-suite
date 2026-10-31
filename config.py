@@ -24,6 +24,7 @@ DEFAULTS: Dict[str, Any] = {
     "products": None,
     "role": None,
     "truncate": None,
+    "recent_turns": None,
     "timestamps": True,
 }
 
@@ -212,6 +213,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     if truncate is not None:
         config["truncate"] = _parse_int(truncate)
 
+    recent_turns = _get(parser, "export", "recent_turns")
+    if recent_turns is not None:
+        config["recent_turns"] = _parse_int(recent_turns)
+
     timestamps = _get(parser, "export", "timestamps")
     if timestamps is not None:
         config["timestamps"] = _parse_bool(timestamps)
@@ -249,6 +254,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_truncate = _get(parser, section, "truncate")
         if flat_truncate is not None:
             config["truncate"] = _parse_int(flat_truncate)
+
+        flat_recent_turns = _get(parser, section, "recent_turns")
+        if flat_recent_turns is not None:
+            config["recent_turns"] = _parse_int(flat_recent_turns)
 
         flat_timestamps = _get(parser, section, "timestamps")
         if flat_timestamps is not None:

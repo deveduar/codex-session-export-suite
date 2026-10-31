@@ -293,7 +293,7 @@ def extract_messages_from_jsonl(
     return messages
 
 
-def _trace_payload_text(value: Any) -> str:
+def _event_payload_text(value: Any) -> str:
     """Convert a tool payload to readable text without dropping structure."""
     if value is None:
         return ""
@@ -302,7 +302,7 @@ def _trace_payload_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
+def extract_session_events_from_jsonl(file_path: Path) -> List[dict]:
     """Extract a chronological view of messages and tool activity.
 
     The original JSONL remains the authoritative lossless source. This derived
@@ -316,10 +316,22 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
     web_search_events: List[dict] = []
     file_change_events: List[dict] = []
 
-    def add_message(role: Optional[str], timestamp: Any, text: Any, ordinal: int) -> None:
+    def turn_id_from(payload: dict) -> str:
+        metadata = payload.get("internal_chat_message_metadata_passthrough") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        return str(payload.get("turn_id") or metadata.get("turn_id") or "")
+
+    def add_message(
+        role: Optional[str],
+        timestamp: Any,
+        text: Any,
+        ordinal: int,
+        turn_id: str = "",
+    ) -> None:
         if role not in ("user", "assistant"):
             return
-        body = _trace_payload_text(text).strip()
+        body = _event_payload_text(text).strip()
         if not body:
             return
         stamp = str(timestamp or "")
@@ -332,6 +344,7 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
             "role": role,
             "timestamp": stamp,
             "text": body,
+            "turn_id": turn_id,
             "ordinal": ordinal,
         })
 
@@ -360,6 +373,7 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
                         timestamp or payload.get("timestamp"),
                         text,
                         ordinal,
+                        turn_id_from(payload),
                     )
                     continue
 
@@ -371,11 +385,13 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
                     arguments = payload.get("arguments", payload.get("input", ""))
                     events.append({
                         "kind": "tool_call",
+                        "role": "assistant",
                         "timestamp": str(timestamp or ""),
+                        "turn_id": turn_id_from(payload),
                         "tool": tool,
                         "call_id": call_id,
                         "event_id": str(payload.get("id") or ""),
-                        "arguments": _trace_payload_text(arguments),
+                        "arguments": _event_payload_text(arguments),
                         "status": str(payload.get("status") or ""),
                         "ordinal": ordinal,
                     })
@@ -385,11 +401,13 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
                     call_id = str(payload.get("call_id") or "")
                     events.append({
                         "kind": "tool_output",
+                        "role": "assistant",
                         "timestamp": str(timestamp or ""),
+                        "turn_id": turn_id_from(payload),
                         "tool": tool_names.get(call_id, ""),
                         "call_id": call_id,
                         "event_id": str(payload.get("id") or ""),
-                        "output": _trace_payload_text(payload.get("output")),
+                        "output": _event_payload_text(payload.get("output")),
                         "ordinal": ordinal,
                     })
                     continue
@@ -397,11 +415,13 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
                 if item_type == "web_search_call":
                     events.append({
                         "kind": "tool_call",
+                        "role": "assistant",
                         "timestamp": str(timestamp or ""),
+                        "turn_id": turn_id_from(payload),
                         "tool": "web_search",
                         "call_id": str(payload.get("call_id") or ""),
                         "event_id": str(payload.get("id") or ""),
-                        "arguments": _trace_payload_text(payload.get("action", {})),
+                        "arguments": _event_payload_text(payload.get("action", {})),
                         "status": str(payload.get("status") or ""),
                         "ordinal": ordinal,
                     })
@@ -414,7 +434,13 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
                     text = payload.get("message") or payload.get("text") or ""
                     if not isinstance(text, str):
                         text = extract_text_from_content(text)
-                    add_message(role, timestamp or payload.get("timestamp"), text, ordinal)
+                    add_message(
+                        role,
+                        timestamp or payload.get("timestamp"),
+                        text,
+                        ordinal,
+                        turn_id_from(payload),
+                    )
                     continue
 
                 if event_type == "item_completed":
@@ -432,10 +458,11 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
                         if call_id:
                             command_details[call_id] = {
                                 "details": details,
-                                "output": _trace_payload_text(
+                                "output": _event_payload_text(
                                     item.get("aggregated_output") or item.get("stdout")
                                 ),
                                 "timestamp": str(timestamp or ""),
+                                "turn_id": turn_id_from(payload),
                                 "ordinal": ordinal,
                             }
                     elif item_type in ("FileChange", "WebSearch"):
@@ -446,10 +473,12 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
                         }
                         event = {
                             "kind": "activity",
+                            "role": "assistant",
                             "timestamp": str(timestamp or ""),
+                            "turn_id": turn_id_from(payload),
                             "activity": "file_change" if item_type == "FileChange" else "web_search",
                             "event_id": str(item.get("id") or ""),
-                            "output": _trace_payload_text(activity),
+                            "output": _event_payload_text(activity),
                             "ordinal": ordinal,
                         }
                         if item_type == "WebSearch":
@@ -475,7 +504,9 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
         elif command.get("output") or command["details"]:
             events.append({
                 "kind": "tool_output",
+                "role": "assistant",
                 "timestamp": command["timestamp"],
+                "turn_id": command["turn_id"],
                 "tool": tool_names.get(call_id, "shell_command"),
                 "call_id": call_id,
                 "output": command.get("output", ""),
@@ -486,3 +517,22 @@ def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
     events.sort(key=lambda event: event.get("ordinal", -1))
 
     return events
+
+
+def retain_recent_turns(events: List[dict], recent_turns: Optional[int]) -> List[dict]:
+    """Keep the final N user turns, including their assistant/tool events."""
+    if recent_turns is None:
+        return events
+    if recent_turns <= 0:
+        return []
+
+    user_turn_starts = [
+        index
+        for index, event in enumerate(events)
+        if event.get("kind") == "message" and event.get("role") == "user"
+    ]
+    if not user_turn_starts:
+        return []
+
+    start = user_turn_starts[max(0, len(user_turn_starts) - recent_turns)]
+    return events[start:]

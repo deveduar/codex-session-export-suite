@@ -26,23 +26,23 @@ Products are output formats; presets combine products and filters.
 
 | Preset | Products and filtering | Data retention compared with source JSONL |
 |---|---|---|
-| `archive` | Source JSONL and transcript | **Lossless source copy** plus a readable derived view. |
+| `archive` | Source JSONL and chronological transcript with tool activity | **Lossless source copy** plus a readable derived view. |
 | `source` | Source JSONL only | **Lossless.** Copies each source file byte-for-byte. |
-| `markdown` | Markdown of extracted messages without character truncation | **Lossy.** Omits source records and structure that are not represented in the transcript. |
+| `markdown` | Chronological Markdown of messages, tool calls, and results | **Lossy.** Omits source records and metadata that are not represented in the transcript. |
+| `conversation` | Messages only; explicitly excludes tool activity | **Lossy.** Omits tool calls, tool results, and other non-message events. |
 | `prompts` | User messages only | **Lossy.** Assistant messages and non-text records are omitted. |
-| `rag` | Memory JSONL | **Lossy.** Keeps extracted role, timestamp, and text only. |
-| `trace` | Chronological Markdown of messages, tool calls, tool results, file changes, and web-search activity | **Lossy.** A readable activity view; the source JSONL remains the complete record. |
+| `rag` | Structured JSONL of messages and tool activity | **Lossy.** Keeps useful event fields; `faithful` remains the complete source. |
 
-`archive` includes the same byte-for-byte source copies as `source`, then adds a Markdown transcript. Choose `source` for a source-only backup and `archive` when you also want the readable view. Use `rag` separately for the JSONL memory representation; it contains the same extracted message text in a machine-friendly schema.
+`archive` includes the same byte-for-byte source copies as `source`, then adds a chronological Markdown transcript with tool activity. Choose `source` for a source-only backup and `archive` when you also want the readable view. Use `conversation` for a dialogue-only Markdown export. `rag` writes messages, tool calls, tool results, and structured file-change/web-search events as separate JSONL records.
 
-The `faithful` product copies the original session `.jsonl` byte-for-byte. It keeps all records, including metadata and tool events; role filters and truncation do not change this copy. Presets that include `faithful` (`archive` and `source`) therefore preserve the source, while their transcript remains a derived view. With no preset selected, the exporter already writes the same Markdown transcript without character truncation as `--preset markdown`.
+The `faithful` product copies the original session `.jsonl` byte-for-byte. It keeps all records, including metadata and tool events; role filters, recency selection, and truncation do not change this copy. Presets that include `faithful` (`archive` and `source`) therefore preserve the source, while their Markdown products remain derived views. With no preset selected, the exporter writes the same full activity transcript as `--preset markdown`.
 
 | Product | Output |
 |---|---|
-| `transcript` | Markdown conversation |
-| `memory` | JSONL with one extracted message per line |
+| `transcript` | Chronological Markdown with messages and tool activity |
+| `conversation` | Markdown conversation without tool activity |
+| `memory` | JSONL with one structured message or activity event per line |
 | `faithful` | Unmodified source JSONL |
-| `trace` | Chronological Markdown with tool calls and results interleaved |
 
 Examples:
 
@@ -51,8 +51,9 @@ python3 cli.py --preset markdown
 python3 cli.py --preset source
 python3 cli.py --products transcript memory
 python3 cli.py --preset prompts
-python3 cli.py --preset trace
-python3 cli.py --products trace faithful
+python3 cli.py --preset conversation
+python3 cli.py --products transcript faithful
+python3 cli.py --preset markdown --recent-turns 10
 python3 cli.py --list-presets
 python3 cli.py --check-updates
 ```
@@ -93,6 +94,7 @@ preset =
 products =
 role =
 truncate =
+recent_turns =
 timestamps = true
 include_archived = false
 ```
@@ -102,8 +104,9 @@ Leave `codex.dir` empty for auto-detection. Set either `preset` or `products`; w
 Use a different config file with `--config PATH`. Other useful options:
 
 ```text
---role user|assistant|both   Filter exported messages
---truncate N                Keep the first N characters of each extracted message or trace body; 0 disables truncation
+--role user|assistant|both   Filter messages and events by role
+--truncate N                Keep the first N characters of each message or tool body; 0 disables truncation
+--recent-turns N            Keep the last N whole user turns and their tool events
 --no-timestamps             Omit timestamps from Markdown output
 --flat                      Write directly in the output directory
 --include-archived          Include archived_sessions when scanning the Codex root
@@ -118,7 +121,9 @@ Run `python3 cli.py --help` for the full command reference.
 
 The exporter reads `.jsonl` files under `sessions/` by default. Use `--include-archived` or the matching INI setting to also include `archived_sessions`; you can still pass either folder directly as the input path. `--check-updates` compares session IDs and SHA-256 fingerprints with the latest run under the selected output directory. If a run has no fingerprints, comparison stops and asks for a new export; it does not guess from message counts or timestamps. “Not found in scan” means the session was outside the selected input path or absent; it does not by itself prove deletion.
 
-The `faithful` source copy is intentionally unredacted and can contain IDs, local paths, instructions, tool data, and other metadata present in Codex's original file. The `trace` product includes tool inputs and outputs, which may themselves contain sensitive data. Derived exports and run metadata can also contain conversation text and local paths. Review generated files before sharing them.
+`--recent-turns N` treats each user message as the start of a turn and keeps the last N turns with all following assistant/tool events, without cutting individual messages. It applies to derived products; `faithful` still copies the complete source file. No preset truncates text by default. `--truncate N` is an explicit per-body prefix limit.
+
+The `faithful` source copy is intentionally unredacted and can contain IDs, local paths, instructions, tool data, and other metadata present in Codex's original file. The `transcript` and `memory` products include tool inputs and outputs, which may themselves contain sensitive data. Derived exports and run metadata can also contain conversation text and local paths. Review generated files before sharing them.
 
 ## License
 

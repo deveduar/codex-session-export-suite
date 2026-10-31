@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from config import ConfigError, detect_codex_dir, expand_path, load_config
-from extract import extract_messages_from_jsonl, extract_trace_events_from_jsonl
+from extract import extract_session_events_from_jsonl, retain_recent_turns
 from organize import (
     build_session_record,
     create_run_dir,
@@ -32,7 +32,7 @@ from organize import (
 from output import (
     format_jsonl_memory,
     format_markdown_transcript,
-    format_markdown_trace,
+    format_markdown_activity_transcript,
 )
 from products import (
     ProductConfig,
@@ -44,7 +44,7 @@ from products import (
 )
 
 
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -117,14 +117,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--role",
         type=str,
         default=None,
-        help="Force role filter: user, assistant, or both",
+        help="Filter chat messages and tool events by role: user, assistant, or both",
     )
 
     parser.add_argument(
         "--truncate",
         type=int,
         default=None,
-        help="Keep the first N characters of each extracted message or trace body (0 disables truncation)",
+        help="Keep the first N characters of each message or tool body (0 disables truncation)",
+    )
+
+    parser.add_argument(
+        "--recent-turns",
+        type=int,
+        default=None,
+        help="Keep the latest N whole user turns with their messages and tool events",
     )
 
     parser.add_argument(
@@ -333,18 +340,17 @@ def output_path_for(product_name: str, display_name: str, output_dir: Path) -> P
         return output_dir / f"memory_{display_name}.jsonl"
     if product_name == "faithful":
         return output_dir / f"faithful_{display_name}.jsonl"
-    if product_name == "trace":
-        return output_dir / f"trace_{display_name}.md"
+    if product_name == "conversation":
+        return output_dir / f"conversation_{display_name}.md"
     return output_dir / f"session_{display_name}.md"
 
 
 def process_session(
     file_path: Path,
-    messages: List[dict],
+    events: List[dict],
     product_config: ProductConfig,
     output_file: Path,
     display_name: str,
-    trace_events: Optional[List[dict]] = None,
     no_timestamps: bool = False,
     dry_run: bool = False,
 ) -> None:
@@ -361,46 +367,39 @@ def process_session(
         print(f"[+] Source JSONL copied: {output_file.name}")
         return
 
-    if product_name == "trace":
-        filtered_events = []
-        role_filter = set(product_config.role_filter or [])
-        limit = product_config.truncate_chars
-        for event in trace_events or []:
-            item = dict(event)
-            if item.get("kind") == "message" and role_filter and item.get("role") not in role_filter:
-                continue
-            if limit:
-                for key in ("text", "arguments", "output"):
-                    value = item.get(key)
-                    if isinstance(value, str) and len(value) > limit:
-                        item[key] = value[:limit] + "..."
-            filtered_events.append(item)
-        content = format_markdown_trace(
+    role_filter = set(product_config.role_filter or [])
+    filtered_events = [
+        dict(event)
+        for event in events
+        if not role_filter or event.get("role") in role_filter
+    ]
+    limit = product_config.truncate_chars
+    if limit:
+        for event in filtered_events:
+            for key in ("text", "arguments", "output"):
+                value = event.get(key)
+                if isinstance(value, str) and len(value) > limit:
+                    event[key] = value[:limit] + "..."
+
+    if product_name == "transcript":
+        content = format_markdown_activity_transcript(
             filtered_events,
             filename=display_name,
             include_timestamps=not no_timestamps,
         )
-        label = "Activity trace"
+        label = "Markdown transcript"
+    elif product_name == "memory":
+        content = format_jsonl_memory(filtered_events, display_name)
+        label = "Structured RAG JSONL"
     else:
-        filtered = product_config.apply(messages)
-
-        if product_name == "transcript":
-            content = format_markdown_transcript(
-                filtered,
-                filename=display_name,
-                include_timestamps=not no_timestamps,
-            )
-            label = "Markdown"
-        elif product_name == "memory":
-            content = format_jsonl_memory(filtered, display_name)
-            label = "Memory JSONL"
-        else:
-            content = format_markdown_transcript(
-                filtered,
-                filename=display_name,
-                include_timestamps=not no_timestamps,
-            )
-            label = "Markdown (default)"
+        messages = [event for event in filtered_events if event.get("kind") == "message"]
+        filtered_messages = product_config.apply(messages)
+        content = format_markdown_transcript(
+            filtered_messages,
+            filename=display_name,
+            include_timestamps=not no_timestamps,
+        )
+        label = "Markdown conversation"
 
     with open(output_file, "w", encoding="utf-8") as handle:
         handle.write(content)
@@ -457,6 +456,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     role = args.role if args.role is not None else config["role"]
     truncate = args.truncate if args.truncate is not None else config["truncate"]
+    recent_turns = (
+        args.recent_turns
+        if args.recent_turns is not None
+        else config.get("recent_turns")
+    )
     layout = "flat" if args.flat else str(config.get("layout") or "run")
 
     if args.no_timestamps is None:
@@ -466,6 +470,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if truncate is not None and truncate < 0:
         print("[!] --truncate cannot be negative.")
+        return 1
+    if recent_turns is not None and recent_turns <= 0:
+        print("[!] --recent-turns must be greater than zero.")
         return 1
 
     selected_preset: Optional[str] = None
@@ -604,12 +611,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             session_index,
             include_fingerprint=run_dir is not None and not args.dry_run,
         )
-        messages = extract_messages_from_jsonl(file_path)
-        trace_events = (
-            extract_trace_events_from_jsonl(file_path)
-            if "trace" in product_names
-            else None
-        )
+        all_events = extract_session_events_from_jsonl(file_path)
+        all_messages = [event for event in all_events if event.get("kind") == "message"]
+        events = retain_recent_turns(all_events, recent_turns)
+        messages = [event for event in events if event.get("kind") == "message"]
         record["message_count"] = len(messages)
         record["user_messages"] = sum(
             1 for message in messages if message.get("role") == "user"
@@ -617,13 +622,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         record["assistant_messages"] = sum(
             1 for message in messages if message.get("role") == "assistant"
         )
-        if trace_events is not None:
-            record["trace_event_count"] = len(trace_events)
+        record["event_count"] = len(events)
+        if recent_turns is not None:
+            record["source_message_count"] = len(all_messages)
         record["outputs"] = {}
         record["skipped_products"] = []
         record["skipped"] = False
 
-        if not messages and not trace_events:
+        if not messages and not events:
             print(f"[*] No extractable conversation text in {file_path.name}")
 
         display_name = (
@@ -633,7 +639,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         for product_config in product_configs:
             product_name = product_config.name
-            has_product_data = bool(trace_events) if product_name == "trace" else bool(messages)
+            has_product_data = bool(messages) if product_name == "conversation" else bool(events)
             if not has_product_data and product_name != "faithful":
                 record["skipped_products"].append(product_name)
                 continue
@@ -654,11 +660,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
             process_session(
                 file_path,
-                messages,
+                events,
                 product_config,
                 output_file,
                 display_name,
-                trace_events=trace_events,
                 no_timestamps=no_timestamps,
                 dry_run=args.dry_run,
             )
@@ -680,7 +685,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if run_dir is not None:
         metadata = {
-            "schema_version": 3,
+            "schema_version": 4,
             "tool": "codex_session_exporter",
             "version": VERSION,
             "run_id": run_dir.name,
@@ -694,6 +699,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "options": {
                 "role": role,
                 "truncate": truncate,
+                "recent_turns": recent_turns,
                 "timestamps": not no_timestamps,
             },
             "counts": {

@@ -72,13 +72,19 @@ class ProductConfig:
 
 transcript = ProductConfig(
     name="transcript",
-    description="Conversation messages in Markdown, in chronological order",
+    description="Chronological Markdown transcript with tool calls and results",
+    role_filter=None,
+)
+
+conversation = ProductConfig(
+    name="conversation",
+    description="Markdown conversation messages only, excluding tool activity",
     role_filter=None,
 )
 
 memory = ProductConfig(
     name="memory",
-    description="One JSON line per message for RAG or another AI",
+    description="One structured JSON line per message, tool call, and tool result for RAG",
     role_filter=None,
 )
 
@@ -88,17 +94,11 @@ faithful = ProductConfig(
     role_filter=None,
 )
 
-trace = ProductConfig(
-    name="trace",
-    description="Chronological Markdown transcript including tool calls and outputs",
-    role_filter=None,
-)
-
 PRODUCTS: Dict[str, ProductConfig] = {
     "transcript": transcript,
+    "conversation": conversation,
     "memory": memory,
     "faithful": faithful,
-    "trace": trace,
 }
 
 
@@ -108,7 +108,7 @@ PRODUCTS: Dict[str, ProductConfig] = {
 
 PRESETS: Dict[str, Dict[str, Any]] = {
     "archive": {
-        "description": "Lossless source JSONL plus a Markdown view of extracted messages",
+        "description": "Lossless source JSONL plus a chronological Markdown transcript with tool activity",
         "products": {
             "transcript": {},
             "faithful": {},
@@ -119,21 +119,21 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "product": "faithful",
     },
     "markdown": {
-        "description": "Lossy: Markdown transcript of extracted messages without text truncation",
+        "description": "Lossy: chronological Markdown transcript including tool activity",
         "product": "transcript",
+    },
+    "conversation": {
+        "description": "Lossy: Markdown dialogue only; explicitly excludes tool activity",
+        "product": "conversation",
     },
     "prompts": {
         "description": "Lossy: user messages only",
-        "product": "transcript",
+        "product": "conversation",
         "role": "user",
     },
     "rag": {
-        "description": "Lossy: role, timestamp, and extracted text for retrieval",
+        "description": "Lossy: structured messages and tool events for retrieval",
         "product": "memory",
-    },
-    "trace": {
-        "description": "Lossy: chronological Markdown view of messages and tool activity",
-        "product": "trace",
     },
 }
 
@@ -226,6 +226,6 @@ def resolve_preset(name: str) -> List[ProductConfig]:
 
 # Aliases for quick access
 transcript_product = transcript
+conversation_product = conversation
 memory_product = memory
 faithful_product = faithful
-trace_product = trace

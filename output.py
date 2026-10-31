@@ -66,13 +66,13 @@ def _code_block(text: str, language: str = "text") -> List[str]:
     return [f"{fence}{language}", text, fence]
 
 
-def format_markdown_trace(
+def format_markdown_activity_transcript(
     events: List[dict],
     filename: str = "session",
     include_timestamps: bool = True,
 ) -> str:
-    """Format messages and tool activity as one chronological Markdown trace."""
-    lines = [f"# Codex Activity: `{filename}`", "", "---", ""]
+    """Format messages and tool activity as one chronological Markdown transcript."""
+    lines = [f"# Codex History: `{filename}`", "", "---", ""]
 
     for event in events:
         kind = event.get("kind")
@@ -134,27 +134,44 @@ def format_markdown_trace(
 
 
 def format_jsonl_memory(
-    messages: List[dict],
+    events: List[dict],
     session_name: str,
 ) -> str:
-    """Format messages as JSONL for memory/RAG corpus.
-    
-    Each line is a JSON object with role, timestamp, and text.
+    """Format messages and tool activity as structured JSONL for RAG.
     
     Args:
-        messages: List of message dicts
+        events: Chronological message and activity event dicts
         session_name: Name of the session
     
     Returns:
         JSONL-formatted string
     """
     lines = []
-    for msg in messages:
+    fields = (
+        "kind",
+        "role",
+        "timestamp",
+        "turn_id",
+        "ordinal",
+        "tool",
+        "call_id",
+        "event_id",
+        "status",
+        "activity",
+        "text",
+        "arguments",
+        "output",
+        "details",
+    )
+    for event in events:
         entry = {
+            "schema_version": 1,
             "session": session_name,
-            "role": msg.get("role", ""),
-            "timestamp": msg.get("timestamp", ""),
-            "text": msg.get("text", ""),
+            "type": event.get("kind", ""),
         }
+        for field in fields[1:]:
+            value = event.get(field)
+            if value not in (None, "", [], {}):
+                entry[field] = value
         lines.append(json.dumps(entry, ensure_ascii=False))
     return "\n".join(lines)
