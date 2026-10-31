@@ -27,6 +27,134 @@ PRODUCT_EXTENSIONS = {
     "faithful": ".jsonl",
 }
 
+TOKEN_USAGE_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "cache_write_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
+
+
+def _valid_usage_snapshot(value: Any) -> Optional[Dict[str, int]]:
+    """Return a complete non-negative token usage snapshot, if valid."""
+    if not isinstance(value, dict):
+        return None
+
+    snapshot = {}
+    for field in TOKEN_USAGE_FIELDS:
+        count = value.get(field)
+        if type(count) is not int or count < 0:
+            return None
+        snapshot[field] = count
+    return snapshot
+
+
+def read_token_usage(file_path: Path) -> Dict[str, Any]:
+    """Read the latest cumulative thread usage without loading transcript data."""
+    record_count = 0
+    valid_snapshot_count = 0
+    latest_snapshot = None
+
+    try:
+        with file_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "token_usage_record":
+                    continue
+
+                record_count += 1
+                payload = record.get("payload")
+                payload = payload if isinstance(payload, dict) else {}
+                snapshot = _valid_usage_snapshot(payload.get("thread_token_usage"))
+                if snapshot is not None:
+                    latest_snapshot = snapshot
+                    valid_snapshot_count += 1
+    except OSError:
+        pass
+
+    usage = {
+        "source": "rollout.token_usage_record",
+        "scope": "thread_cumulative",
+        "record_count": record_count,
+        "valid_snapshot_count": valid_snapshot_count,
+    }
+    if latest_snapshot is None:
+        usage["status"] = "unavailable"
+    else:
+        usage["status"] = "available"
+        usage.update(latest_snapshot)
+    return usage
+
+
+def summarize_token_usage(sessions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarize one latest usage snapshot per unique session/thread ID."""
+    available_count = sum(
+        1 for session in sessions
+        if (session.get("usage") or {}).get("status") == "available"
+    )
+    summary: Dict[str, Any] = {
+        "source": "rollout.token_usage_record",
+        "aggregation": "latest_thread_snapshot_per_unique_session_id",
+        "sessions_with_usage": available_count,
+        "sessions_without_usage": len(sessions) - available_count,
+    }
+
+    latest_by_id: Dict[str, Dict[str, Any]] = {}
+    missing_id_usage = False
+    for session in sessions:
+        session_id = session.get("id")
+        if not session_id:
+            if (session.get("usage") or {}).get("status") == "available":
+                missing_id_usage = True
+            continue
+        session_id = str(session_id)
+        current = latest_by_id.get(session_id)
+        try:
+            source_mtime = int(session.get("source_mtime_ns") or 0)
+        except (TypeError, ValueError):
+            source_mtime = 0
+        try:
+            current_mtime = int((current or {}).get("source_mtime_ns") or 0)
+        except (TypeError, ValueError):
+            current_mtime = 0
+        if current is None or source_mtime >= current_mtime:
+            latest_by_id[session_id] = session
+
+    usage_threads = {
+        session_id: session
+        for session_id, session in latest_by_id.items()
+        if (session.get("usage") or {}).get("status") == "available"
+    }
+    summary["unique_threads"] = len(latest_by_id)
+    summary["unique_threads_with_usage"] = len(usage_threads)
+    summary["unique_threads_without_usage"] = len(latest_by_id) - len(usage_threads)
+    if missing_id_usage:
+        summary["totals_status"] = "unavailable_missing_thread_id"
+        return summary
+
+    if not usage_threads:
+        summary["totals_status"] = "unavailable_no_usage_records"
+        return summary
+
+    totals = {field: 0 for field in TOKEN_USAGE_FIELDS}
+    agent_types: Dict[str, int] = {}
+    for session in usage_threads.values():
+        usage = session["usage"]
+        for field in TOKEN_USAGE_FIELDS:
+            totals[field] += usage[field]
+        agent_type = "subagent" if session.get("parent_thread_id") else "root"
+        agent_types[agent_type] = agent_types.get(agent_type, 0) + 1
+
+    summary["totals_status"] = "partial" if available_count < len(sessions) else "available"
+    summary["totals"] = totals
+    summary["threads_with_usage_by_agent_type"] = agent_types
+    return summary
+
 
 def find_codex_root(path: Optional[Path]) -> Optional[Path]:
     """Find the Codex root that contains session_index.jsonl or sessions/."""
@@ -225,6 +353,7 @@ def build_session_record(
     codex_root: Optional[Path],
     session_index: Dict[str, Dict[str, Any]],
     include_fingerprint: bool = True,
+    include_usage: bool = True,
 ) -> Dict[str, Any]:
     """Build the safe metadata record for one session."""
     metadata = read_session_metadata(file_path)
@@ -256,6 +385,8 @@ def build_session_record(
     }
     if include_fingerprint:
         record.update(source_fingerprint(file_path))
+    if include_usage:
+        record["usage"] = read_token_usage(file_path)
     return record
 
 
@@ -399,6 +530,25 @@ def _display_name(session: Dict[str, Any]) -> str:
     )
 
 
+def _session_usage_text(session: Dict[str, Any]) -> str:
+    """Format per-session token counters compactly for the run index."""
+    usage = session.get("usage") or {}
+    if usage.get("status") != "available":
+        return "unavailable"
+
+    values = (
+        usage.get("input_tokens"),
+        usage.get("cached_input_tokens"),
+        usage.get("cache_write_input_tokens"),
+        usage.get("output_tokens"),
+        usage.get("reasoning_output_tokens"),
+        usage.get("total_tokens"),
+    )
+    if any(type(value) is not int for value in values):
+        return "unavailable"
+    return " / ".join(f"{value:,}" for value in values)
+
+
 def write_product_index(
     run_dir: Path,
     product_name: str,
@@ -449,6 +599,7 @@ def write_root_index(
     sessions = metadata.get("sessions", [])
     product_names = metadata.get("products", [])
     counts = metadata.get("counts", {})
+    usage_summary = metadata.get("usage_summary") or {}
     run_id = metadata.get("run_id", run_dir.name)
 
     lines = [
@@ -464,10 +615,38 @@ def write_root_index(
             f"- Sessions: {counts.get('sessions_exported', 0)} exported, "
             f"{counts.get('sessions_skipped', 0)} skipped"
         ),
-        "",
-        "## Product indexes",
-        "",
     ]
+
+    if usage_summary:
+        found = usage_summary.get("sessions_with_usage", 0)
+        total = len(sessions)
+        totals_status = usage_summary.get("totals_status", "unavailable")
+        coverage = "partial" if totals_status == "partial" else totals_status
+        lines.extend(
+            [
+                f"- Token usage: recorded for {found}/{total} sessions; totals {coverage}.",
+            ]
+        )
+        totals = usage_summary.get("totals")
+        if isinstance(totals, dict):
+            lines.append(
+                "- Recorded token totals: "
+                f"input {totals.get('input_tokens', 0):,}; "
+                f"cached input {totals.get('cached_input_tokens', 0):,}; "
+                f"cache-write input {totals.get('cache_write_input_tokens', 0):,}; "
+                f"output {totals.get('output_tokens', 0):,}; "
+                f"reasoning output {totals.get('reasoning_output_tokens', 0):,}; "
+                f"total {totals.get('total_tokens', 0):,}."
+            )
+        lines.append(
+            "- Per-session order: input / cached input / cache-write input / output / "
+            "reasoning output / total. Cached input is included in input; reasoning "
+            "output is included in output. Counts cover the source thread, including "
+            "when the export uses `--recent-turns`. `unavailable` means Codex recorded "
+            "no usable usage snapshot."
+        )
+
+    lines.extend(["", "## Product indexes", ""])
 
     for product_name in product_names:
         count = sum(
@@ -492,8 +671,8 @@ def write_root_index(
                     "",
                     f"### {_markdown_text(project_name)}",
                     "",
-                    "| Date | Session | Agent | Parent | Messages | Files |",
-                    "|---|---|---|---|---:|---|",
+                    "| Date | Session | Agent | Parent | Messages | Token usage | Files |",
+                    "|---|---|---|---|---:|---|---|",
                 ]
             )
             sessions_by_id = {
@@ -527,7 +706,7 @@ def write_root_index(
                 lines.append(
                     f"| {date} | {_markdown_text(name)} | {_markdown_text(agent)} | "
                     f"{parent} | {session.get('message_count', 0)} | "
-                    f"{' · '.join(links)} |"
+                    f"{_session_usage_text(session)} | {' · '.join(links)} |"
                 )
 
     skipped = [session for session in sessions if session.get("skipped")]
@@ -537,8 +716,8 @@ def write_root_index(
                 "",
                 "## Skipped sessions",
                 "",
-                "| Date | Session | Project | Reason |",
-                "|---|---|---|---|",
+                "| Date | Session | Project | Reason | Token usage |",
+                "|---|---|---|---|---|",
             ]
         )
         for session in skipped:
@@ -546,7 +725,8 @@ def write_root_index(
             lines.append(
                 f"| {date} | {_markdown_text(_display_name(session))} | "
                 f"{_markdown_text(session.get('project') or '')} | "
-                f"{_markdown_text(session.get('reason') or 'skipped')} |"
+                f"{_markdown_text(session.get('reason') or 'skipped')} | "
+                f"{_session_usage_text(session)} |"
             )
 
     path = run_dir / "index.md"

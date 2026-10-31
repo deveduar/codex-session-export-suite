@@ -26,6 +26,7 @@ from organize import (
     next_run_dir,
     product_filename,
     run_label,
+    summarize_token_usage,
     write_indexes,
     write_metadata,
 )
@@ -44,7 +45,7 @@ from products import (
 )
 
 
-VERSION = "2.8.0"
+VERSION = "2.9.0"
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -533,7 +534,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         current_records = []
         for file_path in current_files:
             current_records.append(
-                build_session_record(file_path, codex_root, session_index)
+                build_session_record(
+                    file_path,
+                    codex_root,
+                    session_index,
+                    include_usage=False,
+                )
             )
         previous_records = latest_metadata.get("sessions", [])
         try:
@@ -685,7 +691,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if run_dir is not None:
         metadata = {
-            "schema_version": 4,
+            "schema_version": 5,
             "tool": "codex_session_exporter",
             "version": VERSION,
             "run_id": run_dir.name,
@@ -712,6 +718,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ),
                 "files_written": files_written,
             },
+            "usage_summary": summarize_token_usage(session_records),
             "sessions": session_records,
         }
 
