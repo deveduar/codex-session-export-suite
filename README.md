@@ -31,6 +31,7 @@ Products are output formats; presets combine products and filters.
 | `markdown` | Markdown of extracted messages without character truncation | **Lossy.** Omits source records and structure that are not represented in the transcript. |
 | `prompts` | User messages only | **Lossy.** Assistant messages and non-text records are omitted. |
 | `rag` | Memory JSONL | **Lossy.** Keeps extracted role, timestamp, and text only. |
+| `trace` | Chronological Markdown of messages, tool calls, tool results, file changes, and web-search activity | **Lossy.** A readable activity view; the source JSONL remains the complete record. |
 
 `archive` includes the same byte-for-byte source copies as `source`, then adds a Markdown transcript. Choose `source` for a source-only backup and `archive` when you also want the readable view. Use `rag` separately for the JSONL memory representation; it contains the same extracted message text in a machine-friendly schema.
 
@@ -41,6 +42,7 @@ The `faithful` product copies the original session `.jsonl` byte-for-byte. It ke
 | `transcript` | Markdown conversation |
 | `memory` | JSONL with one extracted message per line |
 | `faithful` | Unmodified source JSONL |
+| `trace` | Chronological Markdown with tool calls and results interleaved |
 
 Examples:
 
@@ -49,6 +51,8 @@ python3 cli.py --preset markdown
 python3 cli.py --preset source
 python3 cli.py --products transcript memory
 python3 cli.py --preset prompts
+python3 cli.py --preset trace
+python3 cli.py --products trace faithful
 python3 cli.py --list-presets
 python3 cli.py --check-updates
 ```
@@ -99,7 +103,7 @@ Use a different config file with `--config PATH`. Other useful options:
 
 ```text
 --role user|assistant|both   Filter exported messages
---truncate N                Keep the first N characters of each extracted message; 0 disables truncation
+--truncate N                Keep the first N characters of each extracted message or trace body; 0 disables truncation
 --no-timestamps             Omit timestamps from Markdown output
 --flat                      Write directly in the output directory
 --include-archived          Include archived_sessions when scanning the Codex root
@@ -114,7 +118,7 @@ Run `python3 cli.py --help` for the full command reference.
 
 The exporter reads `.jsonl` files under `sessions/` by default. Use `--include-archived` or the matching INI setting to also include `archived_sessions`; you can still pass either folder directly as the input path. `--check-updates` compares session IDs and SHA-256 fingerprints with the latest run under the selected output directory. If a run has no fingerprints, comparison stops and asks for a new export; it does not guess from message counts or timestamps. “Not found in scan” means the session was outside the selected input path or absent; it does not by itself prove deletion.
 
-The `faithful` source copy is intentionally unredacted and can contain IDs, local paths, instructions, tool data, and other metadata present in Codex's original file. Derived exports and run metadata can also contain conversation text and local paths. Review generated files before sharing them.
+The `faithful` source copy is intentionally unredacted and can contain IDs, local paths, instructions, tool data, and other metadata present in Codex's original file. The `trace` product includes tool inputs and outputs, which may themselves contain sensitive data. Derived exports and run metadata can also contain conversation text and local paths. Review generated files before sharing them.
 
 ## License
 

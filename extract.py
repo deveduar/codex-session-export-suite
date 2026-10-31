@@ -291,3 +291,198 @@ def extract_messages_from_jsonl(
                         add_message(role, timestamp, text, dedupe=True)
 
     return messages
+
+
+def _trace_payload_text(value: Any) -> str:
+    """Convert a tool payload to readable text without dropping structure."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def extract_trace_events_from_jsonl(file_path: Path) -> List[dict]:
+    """Extract a chronological view of messages and tool activity.
+
+    The original JSONL remains the authoritative lossless source. This derived
+    view includes visible messages, tool calls/results, and structured command,
+    file-change, and web-search activity when available.
+    """
+    events: List[dict] = []
+    seen_messages = set()
+    tool_names: Dict[str, str] = {}
+    command_details: Dict[str, dict] = {}
+    web_search_events: List[dict] = []
+    file_change_events: List[dict] = []
+
+    def add_message(role: Optional[str], timestamp: Any, text: Any, ordinal: int) -> None:
+        if role not in ("user", "assistant"):
+            return
+        body = _trace_payload_text(text).strip()
+        if not body:
+            return
+        stamp = str(timestamp or "")
+        dedupe_key = (role, stamp, body)
+        if dedupe_key in seen_messages:
+            return
+        seen_messages.add(dedupe_key)
+        events.append({
+            "kind": "message",
+            "role": role,
+            "timestamp": stamp,
+            "text": body,
+            "ordinal": ordinal,
+        })
+
+    with open(file_path, "r", encoding="utf-8") as handle:
+        for ordinal, line in enumerate(handle):
+            line = line.strip()
+            if not line:
+                continue
+            data = parse_jsonl_line(line)
+            if not isinstance(data, dict):
+                continue
+
+            timestamp = data.get("timestamp", "")
+            record_type = data.get("type")
+            payload = data.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+
+            if record_type in ("response_item", "turn_context"):
+                item_type = str(payload.get("type", "")).lower()
+                if record_type == "turn_context" or item_type == "message":
+                    role = detect_role(payload)
+                    text = extract_text_from_content(payload.get("content", []))
+                    add_message(
+                        role,
+                        timestamp or payload.get("timestamp"),
+                        text,
+                        ordinal,
+                    )
+                    continue
+
+                if item_type in ("function_call", "custom_tool_call"):
+                    call_id = str(payload.get("call_id") or "")
+                    tool = str(payload.get("name") or item_type)
+                    if call_id:
+                        tool_names[call_id] = tool
+                    arguments = payload.get("arguments", payload.get("input", ""))
+                    events.append({
+                        "kind": "tool_call",
+                        "timestamp": str(timestamp or ""),
+                        "tool": tool,
+                        "call_id": call_id,
+                        "event_id": str(payload.get("id") or ""),
+                        "arguments": _trace_payload_text(arguments),
+                        "status": str(payload.get("status") or ""),
+                        "ordinal": ordinal,
+                    })
+                    continue
+
+                if item_type in ("function_call_output", "custom_tool_call_output"):
+                    call_id = str(payload.get("call_id") or "")
+                    events.append({
+                        "kind": "tool_output",
+                        "timestamp": str(timestamp or ""),
+                        "tool": tool_names.get(call_id, ""),
+                        "call_id": call_id,
+                        "event_id": str(payload.get("id") or ""),
+                        "output": _trace_payload_text(payload.get("output")),
+                        "ordinal": ordinal,
+                    })
+                    continue
+
+                if item_type == "web_search_call":
+                    events.append({
+                        "kind": "tool_call",
+                        "timestamp": str(timestamp or ""),
+                        "tool": "web_search",
+                        "call_id": str(payload.get("call_id") or ""),
+                        "event_id": str(payload.get("id") or ""),
+                        "arguments": _trace_payload_text(payload.get("action", {})),
+                        "status": str(payload.get("status") or ""),
+                        "ordinal": ordinal,
+                    })
+                    continue
+
+            if record_type == "event_msg":
+                event_type = str(payload.get("type", "")).lower()
+                if event_type in ("user_message", "agent_message"):
+                    role = "user" if event_type == "user_message" else "assistant"
+                    text = payload.get("message") or payload.get("text") or ""
+                    if not isinstance(text, str):
+                        text = extract_text_from_content(text)
+                    add_message(role, timestamp or payload.get("timestamp"), text, ordinal)
+                    continue
+
+                if event_type == "item_completed":
+                    item = payload.get("item")
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = str(item.get("type", ""))
+                    if item_type == "CommandExecution":
+                        call_id = str(item.get("id") or "")
+                        details = {
+                            key: item.get(key)
+                            for key in ("command", "cwd", "duration", "exit_code", "status")
+                            if item.get(key) not in (None, "")
+                        }
+                        if call_id:
+                            command_details[call_id] = {
+                                "details": details,
+                                "output": _trace_payload_text(
+                                    item.get("aggregated_output") or item.get("stdout")
+                                ),
+                                "timestamp": str(timestamp or ""),
+                                "ordinal": ordinal,
+                            }
+                    elif item_type in ("FileChange", "WebSearch"):
+                        activity = {
+                            key: value
+                            for key, value in item.items()
+                            if key not in ("id", "type") and value not in (None, "", [], {})
+                        }
+                        event = {
+                            "kind": "activity",
+                            "timestamp": str(timestamp or ""),
+                            "activity": "file_change" if item_type == "FileChange" else "web_search",
+                            "event_id": str(item.get("id") or ""),
+                            "output": _trace_payload_text(activity),
+                            "ordinal": ordinal,
+                        }
+                        if item_type == "WebSearch":
+                            web_search_events.append(event)
+                        else:
+                            file_change_events.append(event)
+
+    events.extend(web_search_events)
+    events.extend(file_change_events)
+    events.sort(key=lambda event: event.get("ordinal", -1))
+
+    outputs_by_call_id = {
+        event.get("call_id"): event
+        for event in events
+        if event.get("kind") == "tool_output" and event.get("call_id")
+    }
+    for call_id, command in command_details.items():
+        output_event = outputs_by_call_id.get(call_id)
+        if output_event is not None:
+            output_event["details"] = command["details"]
+            if not output_event.get("output") and command.get("output"):
+                output_event["output"] = command["output"]
+        elif command.get("output") or command["details"]:
+            events.append({
+                "kind": "tool_output",
+                "timestamp": command["timestamp"],
+                "tool": tool_names.get(call_id, "shell_command"),
+                "call_id": call_id,
+                "output": command.get("output", ""),
+                "details": command["details"],
+                "ordinal": command["ordinal"],
+            })
+
+    events.sort(key=lambda event: event.get("ordinal", -1))
+
+    return events

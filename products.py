@@ -88,10 +88,17 @@ faithful = ProductConfig(
     role_filter=None,
 )
 
+trace = ProductConfig(
+    name="trace",
+    description="Chronological Markdown transcript including tool calls and outputs",
+    role_filter=None,
+)
+
 PRODUCTS: Dict[str, ProductConfig] = {
     "transcript": transcript,
     "memory": memory,
     "faithful": faithful,
+    "trace": trace,
 }
 
 
@@ -123,6 +130,10 @@ PRESETS: Dict[str, Dict[str, Any]] = {
     "rag": {
         "description": "Lossy: role, timestamp, and extracted text for retrieval",
         "product": "memory",
+    },
+    "trace": {
+        "description": "Lossy: chronological Markdown view of messages and tool activity",
+        "product": "trace",
     },
 }
 
@@ -217,3 +228,4 @@ def resolve_preset(name: str) -> List[ProductConfig]:
 transcript_product = transcript
 memory_product = memory
 faithful_product = faithful
+trace_product = trace

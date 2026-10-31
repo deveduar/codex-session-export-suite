@@ -7,6 +7,7 @@ source JSONL directly in the CLI.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List
 
 
@@ -55,6 +56,80 @@ def format_markdown_transcript(
         lines.append("---")
         lines.append("")
     
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _code_block(text: str, language: str = "text") -> List[str]:
+    """Return a fenced code block whose fence cannot be closed by its content."""
+    longest = max((len(match) for match in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return [f"{fence}{language}", text, fence]
+
+
+def format_markdown_trace(
+    events: List[dict],
+    filename: str = "session",
+    include_timestamps: bool = True,
+) -> str:
+    """Format messages and tool activity as one chronological Markdown trace."""
+    lines = [f"# Codex Activity: `{filename}`", "", "---", ""]
+
+    for event in events:
+        kind = event.get("kind")
+        timestamp = event.get("timestamp")
+        if kind == "message":
+            role = event.get("role")
+            label = "User" if role == "user" else "Codex"
+            heading = f"### {label}"
+            if include_timestamps and timestamp:
+                heading += f" · {timestamp}"
+            lines.extend([heading, ""])
+            text = str(event.get("text", ""))
+            lines.extend([f"> {line}" if line else ">" for line in text.splitlines()] or [">"])
+        elif kind == "tool_call":
+            tool = str(event.get("tool") or "tool")
+            heading = f"### Tool call: `{tool}`"
+            if include_timestamps and timestamp:
+                heading += f" · {timestamp}"
+            lines.extend([heading, ""])
+            if event.get("call_id"):
+                lines.append(f"Call ID: `{event['call_id']}`")
+            if event.get("status"):
+                lines.append(f"Status: `{event['status']}`")
+            if event.get("arguments"):
+                lines.extend(["", "Arguments:"])
+                lines.extend(_code_block(str(event["arguments"])))
+        elif kind == "tool_output":
+            tool = str(event.get("tool") or "tool")
+            heading = f"### Tool output: `{tool}`"
+            if include_timestamps and timestamp:
+                heading += f" · {timestamp}"
+            lines.extend([heading, ""])
+            if event.get("call_id"):
+                lines.append(f"Call ID: `{event['call_id']}`")
+            details = event.get("details") or {}
+            if details:
+                lines.extend(["", "Details:"])
+                lines.extend(_code_block(json.dumps(details, ensure_ascii=False, indent=2), "json"))
+            if event.get("output"):
+                lines.extend(["", "Output:"])
+                lines.extend(_code_block(str(event["output"])))
+        elif kind == "activity":
+            activity = str(event.get("activity") or "activity").replace("_", " ").title()
+            heading = f"### {activity}"
+            if include_timestamps and timestamp:
+                heading += f" · {timestamp}"
+            lines.extend([heading, ""])
+            if event.get("event_id"):
+                lines.append(f"Event ID: `{event['event_id']}`")
+            if event.get("output"):
+                lines.extend(["", "Details:"])
+                lines.extend(_code_block(str(event["output"]), "json"))
+        else:
+            continue
+
+        lines.extend(["", "---", ""])
+
     return "\n".join(lines).rstrip() + "\n"
 
 

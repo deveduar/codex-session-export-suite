@@ -17,12 +17,14 @@ PRODUCT_TITLES = {
     "transcript": "Transcript",
     "memory": "Memory",
     "faithful": "Source JSONL",
+    "trace": "Activity Trace",
 }
 
 PRODUCT_EXTENSIONS = {
     "transcript": ".md",
     "memory": ".jsonl",
     "faithful": ".jsonl",
+    "trace": ".md",
 }
 
 

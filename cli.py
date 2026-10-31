@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from config import ConfigError, detect_codex_dir, expand_path, load_config
-from extract import extract_messages_from_jsonl
+from extract import extract_messages_from_jsonl, extract_trace_events_from_jsonl
 from organize import (
     build_session_record,
     create_run_dir,
@@ -32,6 +32,7 @@ from organize import (
 from output import (
     format_jsonl_memory,
     format_markdown_transcript,
+    format_markdown_trace,
 )
 from products import (
     ProductConfig,
@@ -43,7 +44,7 @@ from products import (
 )
 
 
-VERSION = "2.6.0"
+VERSION = "2.7.0"
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -123,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--truncate",
         type=int,
         default=None,
-        help="Keep the first N characters of each extracted message (0 disables truncation)",
+        help="Keep the first N characters of each extracted message or trace body (0 disables truncation)",
     )
 
     parser.add_argument(
@@ -332,6 +333,8 @@ def output_path_for(product_name: str, display_name: str, output_dir: Path) -> P
         return output_dir / f"memory_{display_name}.jsonl"
     if product_name == "faithful":
         return output_dir / f"faithful_{display_name}.jsonl"
+    if product_name == "trace":
+        return output_dir / f"trace_{display_name}.md"
     return output_dir / f"session_{display_name}.md"
 
 
@@ -341,6 +344,7 @@ def process_session(
     product_config: ProductConfig,
     output_file: Path,
     display_name: str,
+    trace_events: Optional[List[dict]] = None,
     no_timestamps: bool = False,
     dry_run: bool = False,
 ) -> None:
@@ -357,25 +361,46 @@ def process_session(
         print(f"[+] Source JSONL copied: {output_file.name}")
         return
 
-    filtered = product_config.apply(messages)
-
-    if product_name == "transcript":
-        content = format_markdown_transcript(
-            filtered,
+    if product_name == "trace":
+        filtered_events = []
+        role_filter = set(product_config.role_filter or [])
+        limit = product_config.truncate_chars
+        for event in trace_events or []:
+            item = dict(event)
+            if item.get("kind") == "message" and role_filter and item.get("role") not in role_filter:
+                continue
+            if limit:
+                for key in ("text", "arguments", "output"):
+                    value = item.get(key)
+                    if isinstance(value, str) and len(value) > limit:
+                        item[key] = value[:limit] + "..."
+            filtered_events.append(item)
+        content = format_markdown_trace(
+            filtered_events,
             filename=display_name,
             include_timestamps=not no_timestamps,
         )
-        label = "Markdown"
-    elif product_name == "memory":
-        content = format_jsonl_memory(filtered, display_name)
-        label = "Memory JSONL"
+        label = "Activity trace"
     else:
-        content = format_markdown_transcript(
-            filtered,
-            filename=display_name,
-            include_timestamps=not no_timestamps,
-        )
-        label = "Markdown (default)"
+        filtered = product_config.apply(messages)
+
+        if product_name == "transcript":
+            content = format_markdown_transcript(
+                filtered,
+                filename=display_name,
+                include_timestamps=not no_timestamps,
+            )
+            label = "Markdown"
+        elif product_name == "memory":
+            content = format_jsonl_memory(filtered, display_name)
+            label = "Memory JSONL"
+        else:
+            content = format_markdown_transcript(
+                filtered,
+                filename=display_name,
+                include_timestamps=not no_timestamps,
+            )
+            label = "Markdown (default)"
 
     with open(output_file, "w", encoding="utf-8") as handle:
         handle.write(content)
@@ -580,6 +605,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             include_fingerprint=run_dir is not None and not args.dry_run,
         )
         messages = extract_messages_from_jsonl(file_path)
+        trace_events = (
+            extract_trace_events_from_jsonl(file_path)
+            if "trace" in product_names
+            else None
+        )
         record["message_count"] = len(messages)
         record["user_messages"] = sum(
             1 for message in messages if message.get("role") == "user"
@@ -587,11 +617,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         record["assistant_messages"] = sum(
             1 for message in messages if message.get("role") == "assistant"
         )
+        if trace_events is not None:
+            record["trace_event_count"] = len(trace_events)
         record["outputs"] = {}
         record["skipped_products"] = []
         record["skipped"] = False
 
-        if not messages:
+        if not messages and not trace_events:
             print(f"[*] No extractable conversation text in {file_path.name}")
 
         display_name = (
@@ -601,7 +633,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         for product_config in product_configs:
             product_name = product_config.name
-            if not messages and product_name != "faithful":
+            has_product_data = bool(trace_events) if product_name == "trace" else bool(messages)
+            if not has_product_data and product_name != "faithful":
                 record["skipped_products"].append(product_name)
                 continue
 
@@ -625,6 +658,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 product_config,
                 output_file,
                 display_name,
+                trace_events=trace_events,
                 no_timestamps=no_timestamps,
                 dry_run=args.dry_run,
             )
