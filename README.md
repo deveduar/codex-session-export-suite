@@ -26,23 +26,25 @@ Products are output formats; presets combine products and filters.
 
 | Preset | Products and filtering | Data retention compared with source JSONL |
 |---|---|---|
-| `archive` | Transcript, memory, and faithful-message JSON | **Lossy overall.** The JSON product preserves raw payloads only for extracted messages; the other products contain transformed text. |
-| `quick` | Faithful-message JSON | **Lossy.** Preserves raw payloads for extracted messages, but not the complete source file. |
+| `archive` | Source JSONL, transcript, and memory | **Lossless source copy** plus lossy derived formats; a complete backup with convenient views. |
+| `quick` | Source JSONL only | **Lossless.** Copies each source file byte-for-byte; the smaller, faster source-only export. |
 | `study` | Truncated transcript and memory | **Lossy.** Transcript text is truncated; memory omits raw payloads. |
-| `review` | Transcript and faithful-message JSON | **Lossy overall.** The JSON product keeps raw payloads for extracted messages; the transcript is a transformed view. |
+| `review` | Source JSONL and transcript | **Lossless source copy** plus a transformed transcript. The source is not redacted. |
 | `notes` | Transcript with text truncated to about 500 characters | **Lossy.** Text is truncated. |
 | `conversation` | Transcript with extracted user and assistant text | **Lossy.** Message structure and non-text records are omitted. |
 | `prompts` | User messages only | **Lossy.** Assistant messages and non-text records are omitted. |
 | `rag` | Memory JSONL | **Lossy.** Keeps extracted role, timestamp, and text only. |
 | `digest` | Short extractive digest | **Lossy.** Text is shortened and source structure is omitted. |
 
-**No preset is a lossless copy of the source JSONL.** The `faithful` product stores original payloads for recognized user or assistant messages that contain extractable text. It does not preserve every event, metadata record, or line in the original session file. Keep the original Codex JSONL files when exact source preservation is required. The `review` preset does not redact the raw payloads in its faithful JSON output.
+`archive` includes the same byte-for-byte source copies as `quick`, then adds transcript and memory views. They overlap in source data, but serve different scopes: choose `quick` for source-only backup and `archive` when you also want the derived views.
+
+The `faithful` product copies the original session `.jsonl` byte-for-byte. It keeps all records, including metadata and tool events; role filters and truncation do not change this copy. Presets that include `faithful` (`archive`, `quick`, and `review`) therefore preserve the source, while their transcript and memory files remain derived views.
 
 | Product | Output |
 |---|---|
 | `transcript` | Markdown conversation |
 | `memory` | JSONL with one extracted message per line |
-| `faithful` | JSON containing extracted messages and their raw payloads |
+| `faithful` | Unmodified source JSONL |
 | `digest` | Markdown with short text excerpts |
 
 Examples:
@@ -52,6 +54,7 @@ python3 cli.py --preset notes
 python3 cli.py --products transcript memory
 python3 cli.py --preset prompts
 python3 cli.py --list-presets
+python3 cli.py --check-updates
 ```
 
 ## Output layout
@@ -64,13 +67,16 @@ codex_exports/
     ├── metadata.json
     ├── index.md
     ├── transcript/
+    │   └── <project>/
     ├── memory/
+    │   └── <project>/
     └── faithful/
+        └── <project>/
 ```
 
-Session filenames include the session date, thread or project name, and a short ID. Metadata contains export settings, counts, selected session metadata, and relative output paths; it omits account identifiers and full instruction payloads. Product directories are created only when they contain files. Existing flat exports are not moved.
+Session filenames include the session date, thread or project name, and a short ID. Each product groups its session files in project-named subfolders (for example, `transcript/<project>/…` and `faithful/<project>/…`). The run-level `index.md` groups sessions by project and links to each product file; it also shows parent sessions when Codex provides parent-thread metadata. Product indexes list all files in that product. No per-project folders or indexes are created outside the product folders. Windows drive paths and their WSL `/mnt/<drive>/...` equivalents are normalized to the same project key. Metadata contains export settings, source fingerprints, counts, selected session metadata, and relative output paths; it omits account identifiers and full instruction payloads. Existing flat exports are not moved.
 
-To write new exports directly into the output directory, use `--flat` or set `layout = flat` in the config. The output directory defaults to `./codex_exports`; choose another with `-o/--output`.
+To write new exports directly into the output directory, use `--flat` or set `layout = flat` in the config. Flat mode skips the timestamped run and product folders, as well as run metadata and indexes; it changes the layout, not which sessions or products are exported. The output directory defaults to `./codex_exports`; choose another with `-o/--output`.
 
 ## Configuration
 
@@ -90,9 +96,10 @@ products =
 role =
 truncate =
 timestamps = true
+include_archived = false
 ```
 
-Leave `codex.dir` empty for auto-detection. Set either `preset` or `products`; when both are set, `products` takes precedence. `layout` accepts `run` or `flat`. Paths support `~`, `$HOME`, and Windows `%USERPROFILE%` variables.
+Leave `codex.dir` empty for auto-detection. Set either `preset` or `products`; when both are set, `products` takes precedence. `layout` accepts `run` or `flat`. Set `include_archived = true` to include Codex's `archived_sessions` directory. Paths support `~`, `$HOME`, and Windows `%USERPROFILE%` variables.
 
 Use a different config file with `--config PATH`. Other useful options:
 
@@ -101,6 +108,8 @@ Use a different config file with `--config PATH`. Other useful options:
 --truncate N                Truncate text to N characters; 0 disables truncation
 --no-timestamps             Omit timestamps from Markdown output
 --flat                      Write directly in the output directory
+--include-archived          Include archived_sessions when scanning the Codex root
+--check-updates             Compare current source files with the latest run
 --dry-run                   Preview paths without writing
 --output DIR                Choose the output directory
 ```
@@ -109,9 +118,9 @@ Run `python3 cli.py --help` for the full command reference.
 
 ## Input and privacy
 
-The exporter reads `.jsonl` files under `sessions/` by default. Archived sessions are not included automatically; pass the archived directory or a specific session file as the input path.
+The exporter reads `.jsonl` files under `sessions/` by default. Use `--include-archived` or the matching INI setting to also include `archived_sessions`; you can still pass either folder directly as the input path. `--check-updates` compares session IDs and SHA-256 fingerprints with the latest run under the selected output directory. If a run has no fingerprints, comparison stops and asks for a new export; it does not guess from message counts or timestamps. “Not found in scan” means the session was outside the selected input path or absent; it does not by itself prove deletion.
 
-Exports may contain conversation text and raw message payloads. Run indexes and metadata can include local paths such as the session working directory. Review generated files before sharing them.
+The `faithful` source copy is intentionally unredacted and can contain IDs, local paths, instructions, tool data, and other metadata present in Codex's original file. Derived exports and run metadata can also contain conversation text and local paths. Review generated files before sharing them.
 
 ## License
 

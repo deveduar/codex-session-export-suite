@@ -1,6 +1,7 @@
 """Output formatting for Codex export products.
 
-Handles Markdown, JSONL, and faithful JSON output formats.
+Formats Markdown and derived JSONL products. The faithful product copies its
+source JSONL directly in the CLI.
 """
 
 from __future__ import annotations
@@ -110,40 +111,6 @@ def format_jsonl_memory(
         }
         lines.append(json.dumps(entry, ensure_ascii=False))
     return "\n".join(lines)
-
-
-def format_faithful_json(
-    messages: List[dict],
-    session_name: str,
-    include_raw_payload: bool = True,
-) -> str:
-    """Format messages as a faithful lossless JSON archive.
-    
-    Args:
-        messages: List of message dicts
-        session_name: Name of the session
-        include_raw_payload: Whether to include raw payload data
-    
-    Returns:
-        JSON-formatted string
-    """
-    archive = {
-        "session": session_name,
-        "messages": messages,
-        "metadata": {
-            "total_messages": len(messages),
-            "user_messages": sum(1 for m in messages if m.get("role") == "user"),
-            "assistant_messages": sum(1 for m in messages if m.get("role") == "assistant"),
-        },
-    }
-    
-    if include_raw_payload:
-        # Include filtered raw payloads
-        archive["raw_payloads"] = [
-            m.get("raw_payload", {}) for m in messages if m.get("raw_payload")
-        ]
-    
-    return json.dumps(archive, ensure_ascii=False, indent=2)
 
 
 def format_digest_summary(

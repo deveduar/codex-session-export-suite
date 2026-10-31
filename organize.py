@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import re
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
 from extract import read_session_metadata
@@ -14,14 +16,14 @@ from extract import read_session_metadata
 PRODUCT_TITLES = {
     "transcript": "Transcript",
     "memory": "Memory",
-    "faithful": "Faithful",
+    "faithful": "Source JSONL",
     "digest": "Digest",
 }
 
 PRODUCT_EXTENSIONS = {
     "transcript": ".md",
     "memory": ".jsonl",
-    "faithful": ".json",
+    "faithful": ".jsonl",
     "digest": ".md",
 }
 
@@ -83,7 +85,6 @@ def load_session_index(codex_root: Optional[Path]) -> Dict[str, Dict[str, Any]]:
 
         index[str(session_id)] = {
             "thread_name": data.get("thread_name"),
-            "updated_at": data.get("updated_at"),
         }
 
     return index
@@ -100,6 +101,47 @@ def project_from_cwd(cwd: Optional[str]) -> Optional[str]:
 
     name = text.rsplit("/", 1)[-1]
     return name or None
+
+
+def project_identity(metadata: Dict[str, Any]) -> Dict[str, str]:
+    """Build a stable project folder name from cwd or a workspace root."""
+    roots = metadata.get("workspace_roots") or []
+    path = metadata.get("cwd") or (roots[0] if roots else None)
+    if not path:
+        return {"project": "unknown", "project_key": "unknown", "project_slug": "unknown"}
+
+    normalized = re.sub(r"/+", "/", str(path).replace("\\", "/")).rstrip("/")
+    if not normalized:
+        normalized = str(path)
+    windows_drive = re.match(r"^([A-Za-z]):/(.*)$", normalized)
+    wsl_drive = re.match(r"^/mnt/([A-Za-z])/(.*)$", normalized, flags=re.IGNORECASE)
+    if windows_drive:
+        key = f"{windows_drive.group(1)}:/{windows_drive.group(2)}".casefold()
+    elif wsl_drive:
+        key = f"{wsl_drive.group(1)}:/{wsl_drive.group(2)}".casefold()
+    else:
+        key = normalized.casefold() if os.name == "nt" else normalized
+    name = project_from_cwd(normalized) or "project"
+    suffix = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+    return {
+        "project": name,
+        "project_key": key,
+        "project_slug": f"{slugify(name, 48)}-{suffix}",
+    }
+
+
+def source_fingerprint(file_path: Path) -> Dict[str, Any]:
+    """Return a content hash and filesystem details for update comparisons."""
+    stat = file_path.stat()
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "source_size": stat.st_size,
+        "source_mtime_ns": stat.st_mtime_ns,
+        "source_sha256": digest.hexdigest(),
+    }
 
 
 def slugify(value: Any, max_length: int = 80) -> str:
@@ -147,15 +189,15 @@ def session_identity(
 ) -> Dict[str, Optional[str]]:
     """Build the human-readable session identity used in filenames."""
     thread_name = (index_entry or {}).get("thread_name")
-    project = project_from_cwd(metadata.get("cwd"))
+    project = project_identity(metadata)
     date = session_date(metadata, file_path)
     short_id = short_session_id(metadata, file_path)
-    label = thread_name or project or "session"
+    label = thread_name or project["project"] or "session"
     slug = f"{date}_{slugify(label, 55)}_{short_id}"
 
     return {
         "thread_name": thread_name or None,
-        "project": project,
+        **project,
         "date": date,
         "short_id": short_id,
         "slug": slug,
@@ -182,6 +224,7 @@ def build_session_record(
     file_path: Path,
     codex_root: Optional[Path],
     session_index: Dict[str, Dict[str, Any]],
+    include_fingerprint: bool = True,
 ) -> Dict[str, Any]:
     """Build the safe metadata record for one session."""
     metadata = read_session_metadata(file_path)
@@ -189,10 +232,16 @@ def build_session_record(
     index_entry = session_index.get(session_id)
     identity = session_identity(metadata, index_entry, file_path)
 
-    return {
+    record = {
         "id": metadata.get("id"),
+        "parent_thread_id": metadata.get("parent_thread_id"),
+        "thread_source": metadata.get("thread_source"),
+        "agent_role": metadata.get("agent_role"),
+        "agent_nickname": metadata.get("agent_nickname"),
         "thread_name": identity["thread_name"],
         "project": identity["project"],
+        "project_key": identity["project_key"],
+        "project_slug": identity["project_slug"],
         "cwd": metadata.get("cwd"),
         "workspace_roots": metadata.get("workspace_roots") or [],
         "started_at": metadata.get("timestamp"),
@@ -205,6 +254,9 @@ def build_session_record(
         "source_file": source_file_relative(file_path, codex_root),
         "slug": identity["slug"],
     }
+    if include_fingerprint:
+        record.update(source_fingerprint(file_path))
+    return record
 
 
 def run_label(preset: Optional[str], products: List[str]) -> str:
@@ -258,6 +310,77 @@ def write_metadata(run_dir: Path, metadata: Dict[str, Any]) -> Path:
     return path
 
 
+def find_latest_run(output_dir: Path) -> Optional[tuple[Path, Dict[str, Any]]]:
+    """Load the most recently written run metadata under an output directory."""
+    if not output_dir.is_dir():
+        return None
+
+    candidates = []
+    for child in output_dir.iterdir():
+        metadata_path = child / "metadata.json"
+        if not child.is_dir() or not metadata_path.is_file():
+            continue
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            modified = metadata_path.stat().st_mtime_ns
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(metadata, dict):
+            candidates.append((modified, child, metadata))
+
+    if not candidates:
+        return None
+
+    _, run_dir, metadata = max(candidates, key=lambda item: item[0])
+    return run_dir, metadata
+
+
+def compare_session_records(
+    previous: List[Dict[str, Any]],
+    current: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Compare sessions by source SHA-256 relative to the current scan."""
+    old_by_key = {
+        str(record.get("id") or record.get("source_file")): record
+        for record in previous
+    }
+    new_by_key = {
+        str(record.get("id") or record.get("source_file")): record
+        for record in current
+    }
+    result: Dict[str, List[Dict[str, Any]]] = {
+        "new": [],
+        "modified": [],
+        "unchanged": [],
+        "not_found_in_scan": [],
+    }
+
+    missing_hashes = [
+        str(record.get("id") or record.get("source_file") or "unknown")
+        for record in previous
+        if not record.get("source_sha256")
+    ]
+    if missing_hashes:
+        raise ValueError(
+            f"baseline is missing source SHA-256 fingerprints for {len(missing_hashes)} session(s)"
+        )
+
+    for key, record in new_by_key.items():
+        old = old_by_key.get(key)
+        if old is None:
+            result["new"].append(record)
+        elif old.get("source_sha256") == record.get("source_sha256"):
+            result["unchanged"].append(record)
+        else:
+            result["modified"].append(record)
+
+    for key, record in old_by_key.items():
+        if key not in new_by_key:
+            result["not_found_in_scan"].append(record)
+
+    return result
+
+
 def _markdown_text(value: Any) -> str:
     text = str(value or "").replace("\n", " ").strip()
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("[", "\\[").replace("]", "\\]")
@@ -274,28 +397,6 @@ def _display_name(session: Dict[str, Any]) -> str:
         or session.get("id")
         or "session"
     )
-
-
-def _session_rows(sessions: List[Dict[str, Any]], product_names: List[str]) -> List[str]:
-    rows = []
-    for session in sessions:
-        outputs = session.get("outputs", {})
-        if not outputs:
-            continue
-
-        date = str(session.get("started_at") or session.get("date") or "")[:10]
-        name = _display_name(session)
-        project = session.get("project") or ""
-        links = [
-            _markdown_link(outputs[name], name) if name in outputs else ""
-            for name in product_names
-        ]
-        rows.append(
-            f"| {date} | {_markdown_text(name)} | {_markdown_text(project)} | "
-            + " | ".join(links)
-            + " |"
-        )
-    return rows
 
 
 def write_product_index(
@@ -328,9 +429,11 @@ def write_product_index(
         name = _display_name(session)
         project = session.get("project") or ""
         messages = session.get("message_count", 0)
+        output_parts = PurePosixPath(output).parts
+        relative_output = PurePosixPath(*output_parts[1:]).as_posix()
         lines.append(
             f"| {date} | {_markdown_text(name)} | {_markdown_text(project)} | "
-            f"{messages} | {_markdown_link(Path(output).name, Path(output).name)} |"
+            f"{messages} | {_markdown_link(relative_output, Path(output).name)} |"
         )
 
     path = run_dir / product_name / "index.md"
@@ -354,6 +457,7 @@ def write_root_index(
         f"- Generated: {metadata.get('generated_at', '')}",
         f"- Codex directory: `{metadata.get('codex_dir') or ''}`",
         f"- Layout: {metadata.get('layout', '')}",
+        f"- Archived sessions included: {'yes' if metadata.get('include_archived') else 'no'}",
         f"- Preset: {metadata.get('preset') or '(none)'}",
         f"- Products: {', '.join(product_names)}",
         (
@@ -375,18 +479,56 @@ def write_root_index(
                 f"- {_markdown_link(f'{product_name}/index.md', title)} ({count})"
             )
 
-    lines.extend(
-        [
-            "",
-            "## Sessions",
-            "",
-            "| Date | Session | Project | "
-            + " | ".join(product_names)
-            + " |",
-            "|---|---|---|" + "---|" * len(product_names),
-        ]
-    )
-    lines.extend(_session_rows(sessions, product_names))
+    project_groups: Dict[str, List[Dict[str, Any]]] = {}
+    for session in sessions:
+        if session.get("outputs"):
+            project_groups.setdefault(session.get("project_slug") or "unknown", []).append(session)
+    if project_groups:
+        lines.extend(["", "## Sessions by project"])
+        for project_slug, project_sessions in sorted(project_groups.items()):
+            project_name = project_sessions[0].get("project") or "Unknown project"
+            lines.extend(
+                [
+                    "",
+                    f"### {_markdown_text(project_name)}",
+                    "",
+                    "| Date | Session | Agent | Parent | Messages | Files |",
+                    "|---|---|---|---|---:|---|",
+                ]
+            )
+            sessions_by_id = {
+                str(session.get("id")): session
+                for session in project_sessions
+                if session.get("id")
+            }
+            for session in project_sessions:
+                date = str(session.get("started_at") or session.get("date") or "")[:10]
+                name = _display_name(session)
+                agent = (
+                    session.get("agent_nickname")
+                    or session.get("agent_role")
+                    or session.get("thread_source")
+                    or ""
+                )
+                parent_id = str(session.get("parent_thread_id") or "")
+                parent_session = sessions_by_id.get(parent_id)
+                if parent_session:
+                    parent_output = next(iter(parent_session.get("outputs", {}).values()))
+                    parent = _markdown_link(parent_output, _display_name(parent_session))
+                else:
+                    parent = _markdown_text(parent_id[:12])
+                links = [
+                    _markdown_link(
+                        output,
+                        PRODUCT_TITLES.get(product_name, product_name.title()),
+                    )
+                    for product_name, output in session.get("outputs", {}).items()
+                ]
+                lines.append(
+                    f"| {date} | {_markdown_text(name)} | {_markdown_text(agent)} | "
+                    f"{parent} | {session.get('message_count', 0)} | "
+                    f"{' · '.join(links)} |"
+                )
 
     skipped = [session for session in sessions if session.get("skipped")]
     if skipped:
@@ -413,7 +555,7 @@ def write_root_index(
 
 
 def write_indexes(run_dir: Path, metadata: Dict[str, Any]) -> List[Path]:
-    """Write product indexes and the run index."""
+    """Write product indexes and the project-grouped run index."""
     paths = []
     sessions = metadata.get("sessions", [])
     run_id = metadata.get("run_id", run_dir.name)

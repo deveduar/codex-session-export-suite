@@ -19,6 +19,7 @@ DEFAULTS: Dict[str, Any] = {
     "codex_dir": None,
     "output_dir": "./codex_exports",
     "layout": "run",
+    "include_archived": False,
     "preset": None,
     "products": None,
     "role": None,
@@ -215,6 +216,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     if timestamps is not None:
         config["timestamps"] = _parse_bool(timestamps)
 
+    include_archived = _get(parser, "export", "include_archived")
+    if include_archived is not None:
+        config["include_archived"] = _parse_bool(include_archived)
+
     # Also accept a flat [codex_export] / [defaults] section for convenience.
     for section in ("codex_export", "defaults"):
         flat_codex_dir = _get(parser, section, "codex_dir")
@@ -248,6 +253,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_timestamps = _get(parser, section, "timestamps")
         if flat_timestamps is not None:
             config["timestamps"] = _parse_bool(flat_timestamps)
+
+        flat_include_archived = _get(parser, section, "include_archived")
+        if flat_include_archived is not None:
+            config["include_archived"] = _parse_bool(flat_include_archived)
 
     config["_config_path"] = config_path
     return config

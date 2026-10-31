@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,8 @@ from extract import extract_messages_from_jsonl
 from organize import (
     build_session_record,
     create_run_dir,
+    compare_session_records,
+    find_latest_run,
     find_codex_root,
     load_session_index,
     next_run_dir,
@@ -28,7 +31,6 @@ from organize import (
 )
 from output import (
     format_digest_summary,
-    format_faithful_json,
     format_jsonl_memory,
     format_markdown_transcript,
 )
@@ -42,7 +44,7 @@ from products import (
 )
 
 
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -140,6 +142,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--include-archived",
+        action="store_true",
+        default=None,
+        help="Include sessions from Codex's archived_sessions directory",
+    )
+
+    parser.add_argument(
+        "--check-updates",
+        action="store_true",
+        default=False,
+        help="Compare current Codex sessions with the latest export run",
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -175,7 +191,10 @@ def sanitize_filename(name: str) -> str:
     return safe[:180].rstrip(". ") or "session"
 
 
-def discover_sessions(codex_path: Optional[Path]) -> List[Path]:
+def discover_sessions(
+    codex_path: Optional[Path],
+    include_archived: bool = False,
+) -> List[Path]:
     """Discover .jsonl session files.
 
     Accepts:
@@ -195,13 +214,38 @@ def discover_sessions(codex_path: Optional[Path]) -> List[Path]:
     if not codex_path.is_dir():
         return []
 
-    sessions_dir = codex_path / "sessions"
-    search_root = sessions_dir if sessions_dir.is_dir() else codex_path
+    path_name = codex_path.name.lower()
+    if path_name == "archived_sessions":
+        search_roots = [codex_path]
+    elif path_name == "sessions":
+        search_roots = [codex_path]
+        archived_dir = codex_path.parent / "archived_sessions"
+        if include_archived and archived_dir.is_dir():
+            search_roots.append(archived_dir)
+    elif (codex_path / "sessions").is_dir():
+        search_roots = [codex_path / "sessions"]
+        archived_dir = codex_path / "archived_sessions"
+        if include_archived and archived_dir.is_dir():
+            search_roots.append(archived_dir)
+    elif (codex_path / "archived_sessions").is_dir():
+        search_roots = (
+            [codex_path / "archived_sessions"] if include_archived else []
+        )
+    else:
+        search_roots = [codex_path]
+        if include_archived:
+            codex_root = find_codex_root(codex_path)
+            archived_dir = codex_root / "archived_sessions" if codex_root else None
+            if archived_dir is not None and archived_dir.is_dir():
+                search_roots.append(archived_dir)
 
-    try:
-        jsonl_files = sorted(search_root.glob("**/*.jsonl"))
-    except OSError:
-        return []
+    jsonl_files = []
+    for search_root in search_roots:
+        try:
+            jsonl_files.extend(search_root.glob("**/*.jsonl"))
+        except OSError:
+            continue
+    jsonl_files = sorted(jsonl_files)
 
     unique_files = []
     seen = set()
@@ -288,7 +332,7 @@ def output_path_for(product_name: str, display_name: str, output_dir: Path) -> P
     if product_name == "memory":
         return output_dir / f"memory_{display_name}.jsonl"
     if product_name == "faithful":
-        return output_dir / f"faithful_{display_name}.json"
+        return output_dir / f"faithful_{display_name}.jsonl"
     if product_name == "digest":
         return output_dir / f"digest_{display_name}.md"
 
@@ -311,6 +355,12 @@ def process_session(
         print(f"[*] {product_name}: {file_path.name} -> {output_file}")
         return
 
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if product_name == "faithful":
+        shutil.copyfile(file_path, output_file)
+        print(f"[+] Source JSONL copied: {output_file.name}")
+        return
+
     filtered = product_config.apply(messages)
 
     if product_name == "transcript":
@@ -323,9 +373,6 @@ def process_session(
     elif product_name == "memory":
         content = format_jsonl_memory(filtered, display_name)
         label = "Memory JSONL"
-    elif product_name == "faithful":
-        content = format_faithful_json(filtered, display_name)
-        label = "Faithful JSON"
     elif product_name == "digest":
         max_chars = getattr(product_config, "truncate_tool_output", 500) or 500
         content = format_digest_summary(filtered, display_name, max_chars=max_chars)
@@ -338,7 +385,6 @@ def process_session(
         )
         label = "Markdown (default)"
 
-    output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as handle:
         handle.write(content)
 
@@ -387,6 +433,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     codex_path = _resolve_codex_dir(args.codex_dir, config)
     output_value = args.output if args.output is not None else config["output_dir"]
+    include_archived = (
+        args.include_archived
+        if args.include_archived is not None
+        else config.get("include_archived", False)
+    )
     role = args.role if args.role is not None else config["role"]
     truncate = args.truncate if args.truncate is not None else config["truncate"]
     layout = "flat" if args.flat else str(config.get("layout") or "run")
@@ -433,13 +484,71 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("  Pass it as the first argument or set it in codex_export.ini.")
         return 1
 
-    jsonl_files = discover_sessions(codex_path)
+    output_base = expand_path(output_value) or Path("./codex_exports")
+
+    if args.check_updates:
+        latest = find_latest_run(output_base)
+        if latest is None:
+            print(f"[!] No run metadata found under: {output_base}")
+            print("  Create a run-layout export before checking for updates.")
+            return 1
+
+        latest_run_dir, latest_metadata = latest
+        if args.include_archived is None:
+            include_archived = latest_metadata.get(
+                "include_archived",
+                include_archived,
+            )
+        if not codex_path.exists():
+            print(f"[!] Codex input path does not exist: {codex_path}")
+            return 1
+
+        codex_root = find_codex_root(codex_path)
+        session_index = load_session_index(codex_root)
+        current_files = discover_sessions(codex_path, include_archived=include_archived)
+        current_records = []
+        for file_path in current_files:
+            current_records.append(
+                build_session_record(file_path, codex_root, session_index)
+            )
+        previous_records = latest_metadata.get("sessions", [])
+        try:
+            comparison = compare_session_records(previous_records, current_records)
+        except ValueError as exc:
+            print(f"[!] Cannot compare this run: {exc}")
+            print("  Create a new export with source fingerprints first.")
+            return 1
+
+        print(f"[*] Comparing with: {latest_run_dir}")
+        print(f"[*] Current sessions found: {len(current_records)}")
+        for status in (
+            "new",
+            "modified",
+            "unchanged",
+            "not_found_in_scan",
+        ):
+            records = comparison[status]
+            label = status.replace("_", " ").title()
+            print(f"[*] {label}: {len(records)}")
+            for record in records:
+                if status in (
+                    "new",
+                    "modified",
+                    "not_found_in_scan",
+                ):
+                    print(f"    - {record.get('thread_name') or record.get('project') or record.get('source_file')}")
+
+        if comparison["not_found_in_scan"]:
+            print("[*] Not found means absent from this scan path; it does not prove deletion.")
+
+        return 0
+
+    jsonl_files = discover_sessions(codex_path, include_archived=include_archived)
     if not jsonl_files:
         print(f"[!] No .jsonl files found in: {codex_path}")
         print("  Pass the Codex directory, sessions directory, a subdirectory, or a .jsonl file.")
         return 1
 
-    output_base = expand_path(output_value) or Path("./codex_exports")
     now = datetime.now().astimezone()
     product_names = [product.name for product in product_configs]
 
@@ -456,6 +565,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     print(f"[*] Codex directory: {codex_path}")
     print(f"[*] Layout: {layout}")
+    if include_archived:
+        print("[*] Archived sessions: included")
     if run_dir is not None:
         print(f"[*] Run directory: {run_dir}")
     print(f"[*] Found {len(jsonl_files)} session files. Processing...")
@@ -470,7 +581,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     for index, file_path in enumerate(jsonl_files, 1):
         print(f"[{index}/{len(jsonl_files)}] Processing: {file_path.name}")
-        record = build_session_record(file_path, codex_root, session_index)
+        record = build_session_record(
+            file_path,
+            codex_root,
+            session_index,
+            include_fingerprint=run_dir is not None and not args.dry_run,
+        )
         messages = extract_messages_from_jsonl(file_path)
         record["message_count"] = len(messages)
         record["user_messages"] = sum(
@@ -480,14 +596,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             1 for message in messages if message.get("role") == "assistant"
         )
         record["outputs"] = {}
+        record["skipped_products"] = []
         record["skipped"] = False
 
         if not messages:
-            record["skipped"] = True
-            record["reason"] = "no messages"
-            print(f"[*] No messages found in {file_path.name}")
-            session_records.append(record)
-            continue
+            print(f"[*] No extractable conversation text in {file_path.name}")
 
         display_name = (
             str(record["slug"])
@@ -496,10 +609,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         for product_config in product_configs:
             product_name = product_config.name
+            if not messages and product_name != "faithful":
+                record["skipped_products"].append(product_name)
+                continue
+
             if run_dir is not None:
                 output_file = (
                     run_dir
                     / product_name
+                    / str(record.get("project_slug") or "unknown")
                     / product_filename(product_name, display_name)
                 )
             else:
@@ -529,11 +647,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if not args.dry_run:
                 files_written += 1
 
+        if not record["outputs"]:
+            record["skipped"] = True
+            record["reason"] = "no extractable conversation text or source product selected"
         session_records.append(record)
 
     if run_dir is not None:
         metadata = {
-            "schema_version": 1,
+            "schema_version": 3,
             "tool": "codex_extension_exporter",
             "version": VERSION,
             "run_id": run_dir.name,
@@ -541,6 +662,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "codex_dir": str(codex_path.absolute()),
             "output_dir": str(output_base.absolute()),
             "layout": "products",
+            "include_archived": bool(include_archived),
             "preset": selected_preset,
             "products": product_names,
             "options": {

@@ -108,7 +108,7 @@ digest = ProductConfig(
 
 faithful = ProductConfig(
     name="faithful",
-    description="JSON archive of extracted messages with their raw payloads",
+    description="Byte-for-byte copy of the original Codex session JSONL",
     role_filter=None,
     include_tool_output=True,
     truncate_tool_output=None,
@@ -129,7 +129,7 @@ PRODUCTS: Dict[str, ProductConfig] = {
 
 PRESETS: Dict[str, Dict[str, Any]] = {
     "archive": {
-        "description": "Lossy overall: transcript, memory corpus and extracted-message archive",
+        "description": "Complete backup: lossless source JSONL plus transcript and memory views",
         "products": {
             "transcript": {"tool_output": "full"},
             "memory": {"files": True},
@@ -137,7 +137,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         },
     },
     "quick": {
-        "description": "Lossy vs source JSONL: raw payloads for extracted messages only",
+        "description": "Source-only lossless byte-for-byte JSONL copy",
         "product": "faithful",
     },
     "study": {
@@ -148,7 +148,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         },
     },
     "review": {
-        "description": "Lossy overall: transcript plus extracted-message archive; no redaction",
+        "description": "Lossless source JSONL plus a readable transcript; no redaction",
         "products": {
             "transcript": {"no_reasoning": True},
             "faithful": {},
