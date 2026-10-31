@@ -1,6 +1,6 @@
-# Codex Extension Exporter
+# Codex Session Exporter (Python)
 
-Export readable and machine friendly views of local Codex sessions. The tool uses Python's standard library and runs on Windows, Linux, and macOS.
+Export readable and machine friendly views of local Codex sessions. This Python CLI reads Codex session JSONL files and runs on Windows, Linux, and macOS.
 
 ## Quick start
 
@@ -26,31 +26,27 @@ Products are output formats; presets combine products and filters.
 
 | Preset | Products and filtering | Data retention compared with source JSONL |
 |---|---|---|
-| `archive` | Source JSONL, transcript, and memory | **Lossless source copy** plus lossy derived formats; a complete backup with convenient views. |
-| `quick` | Source JSONL only | **Lossless.** Copies each source file byte-for-byte; the smaller, faster source-only export. |
-| `study` | Truncated transcript and memory | **Lossy.** Transcript text is truncated; memory omits raw payloads. |
-| `review` | Source JSONL and transcript | **Lossless source copy** plus a transformed transcript. The source is not redacted. |
-| `notes` | Transcript with text truncated to about 500 characters | **Lossy.** Text is truncated. |
-| `conversation` | Transcript with extracted user and assistant text | **Lossy.** Message structure and non-text records are omitted. |
+| `archive` | Source JSONL and transcript | **Lossless source copy** plus a readable derived view. |
+| `source` | Source JSONL only | **Lossless.** Copies each source file byte-for-byte. |
+| `markdown` | Markdown of extracted messages without character truncation | **Lossy.** Omits source records and structure that are not represented in the transcript. |
 | `prompts` | User messages only | **Lossy.** Assistant messages and non-text records are omitted. |
 | `rag` | Memory JSONL | **Lossy.** Keeps extracted role, timestamp, and text only. |
-| `digest` | Short extractive digest | **Lossy.** Text is shortened and source structure is omitted. |
 
-`archive` includes the same byte-for-byte source copies as `quick`, then adds transcript and memory views. They overlap in source data, but serve different scopes: choose `quick` for source-only backup and `archive` when you also want the derived views.
+`archive` includes the same byte-for-byte source copies as `source`, then adds a Markdown transcript. Choose `source` for a source-only backup and `archive` when you also want the readable view. Use `rag` separately for the JSONL memory representation; it contains the same extracted message text in a machine-friendly schema.
 
-The `faithful` product copies the original session `.jsonl` byte-for-byte. It keeps all records, including metadata and tool events; role filters and truncation do not change this copy. Presets that include `faithful` (`archive`, `quick`, and `review`) therefore preserve the source, while their transcript and memory files remain derived views.
+The `faithful` product copies the original session `.jsonl` byte-for-byte. It keeps all records, including metadata and tool events; role filters and truncation do not change this copy. Presets that include `faithful` (`archive` and `source`) therefore preserve the source, while their transcript remains a derived view. With no preset selected, the exporter already writes the same Markdown transcript without character truncation as `--preset markdown`.
 
 | Product | Output |
 |---|---|
 | `transcript` | Markdown conversation |
 | `memory` | JSONL with one extracted message per line |
 | `faithful` | Unmodified source JSONL |
-| `digest` | Markdown with short text excerpts |
 
 Examples:
 
 ```bash
-python3 cli.py --preset notes
+python3 cli.py --preset markdown
+python3 cli.py --preset source
 python3 cli.py --products transcript memory
 python3 cli.py --preset prompts
 python3 cli.py --list-presets
@@ -67,8 +63,6 @@ codex_exports/
     ├── metadata.json
     ├── index.md
     ├── transcript/
-    │   └── <project>/
-    ├── memory/
     │   └── <project>/
     └── faithful/
         └── <project>/
@@ -105,7 +99,7 @@ Use a different config file with `--config PATH`. Other useful options:
 
 ```text
 --role user|assistant|both   Filter exported messages
---truncate N                Truncate text to N characters; 0 disables truncation
+--truncate N                Keep the first N characters of each extracted message; 0 disables truncation
 --no-timestamps             Omit timestamps from Markdown output
 --flat                      Write directly in the output directory
 --include-archived          Include archived_sessions when scanning the Codex root

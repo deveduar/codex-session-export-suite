@@ -17,17 +17,13 @@ class ProductConfig:
         name: str,
         description: str,
         role_filter: Optional[List[str]] = None,
-        include_tool_output: bool = True,
-        truncate_tool_output: Optional[int] = None,
-        no_reasoning: bool = False,
+        truncate_chars: Optional[int] = None,
         role: Optional[str] = None,
     ):
         self.name = name
         self.description = description
         self.role_filter = role_filter or []
-        self.include_tool_output = include_tool_output
-        self.truncate_tool_output = truncate_tool_output
-        self.no_reasoning = no_reasoning
+        self.truncate_chars = truncate_chars
         self.role = role
 
     def clone(self, **overrides: Any) -> "ProductConfig":
@@ -36,9 +32,7 @@ class ProductConfig:
             "name": self.name,
             "description": self.description,
             "role_filter": list(self.role_filter),
-            "include_tool_output": self.include_tool_output,
-            "truncate_tool_output": self.truncate_tool_output,
-            "no_reasoning": self.no_reasoning,
+            "truncate_chars": self.truncate_chars,
             "role": self.role,
         }
         values.update(overrides)
@@ -58,17 +52,14 @@ class ProductConfig:
                 continue
 
             text = msg["text"]
-            if self.truncate_tool_output and len(text) > self.truncate_tool_output:
-                text = text[: self.truncate_tool_output] + "..."
+            if self.truncate_chars and len(text) > self.truncate_chars:
+                text = text[: self.truncate_chars] + "..."
 
             out = {
                 "role": role,
                 "timestamp": msg.get("timestamp", ""),
                 "text": text,
             }
-
-            if self.include_tool_output and not self.no_reasoning:
-                out["raw_payload"] = msg.get("raw_payload", {})
 
             result.append(out)
 
@@ -83,43 +74,24 @@ transcript = ProductConfig(
     name="transcript",
     description="Conversation messages in Markdown, in chronological order",
     role_filter=None,
-    include_tool_output=True,
-    truncate_tool_output=None,
-    no_reasoning=False,
 )
 
 memory = ProductConfig(
     name="memory",
     description="One JSON line per message for RAG or another AI",
     role_filter=None,
-    include_tool_output=False,
-    truncate_tool_output=None,
-    no_reasoning=True,
-)
-
-digest = ProductConfig(
-    name="digest",
-    description="Short extractive summaries of conversation messages",
-    role_filter=None,
-    include_tool_output=False,
-    truncate_tool_output=500,
-    no_reasoning=True,
 )
 
 faithful = ProductConfig(
     name="faithful",
     description="Byte-for-byte copy of the original Codex session JSONL",
     role_filter=None,
-    include_tool_output=True,
-    truncate_tool_output=None,
-    no_reasoning=False,
 )
 
 PRODUCTS: Dict[str, ProductConfig] = {
     "transcript": transcript,
     "memory": memory,
     "faithful": faithful,
-    "digest": digest,
 }
 
 
@@ -129,42 +101,19 @@ PRODUCTS: Dict[str, ProductConfig] = {
 
 PRESETS: Dict[str, Dict[str, Any]] = {
     "archive": {
-        "description": "Complete backup: lossless source JSONL plus transcript and memory views",
+        "description": "Lossless source JSONL plus a Markdown view of extracted messages",
         "products": {
-            "transcript": {"tool_output": "full"},
-            "memory": {"files": True},
+            "transcript": {},
             "faithful": {},
         },
     },
-    "quick": {
+    "source": {
         "description": "Source-only lossless byte-for-byte JSONL copy",
         "product": "faithful",
     },
-    "study": {
-        "description": "Lossy: truncated transcript plus searchable text-only memory",
-        "products": {
-            "transcript": {"tool_output": "truncated"},
-            "memory": {"files": True},
-        },
-    },
-    "review": {
-        "description": "Lossless source JSONL plus a readable transcript; no redaction",
-        "products": {
-            "transcript": {"no_reasoning": True},
-            "faithful": {},
-        },
-    },
-    "notes": {
-        "description": "Lossy: plain transcript with text truncated to ~500 characters",
+    "markdown": {
+        "description": "Lossy: Markdown transcript of extracted messages without text truncation",
         "product": "transcript",
-        "tool_output": "truncated",
-    },
-    "conversation": {
-        "description": "Lossy: extracted user and assistant text only",
-        "product": "transcript",
-        "tool_output": "omit",
-        "patch": "omit",
-        "no_reasoning": True,
     },
     "prompts": {
         "description": "Lossy: user messages only",
@@ -174,10 +123,6 @@ PRESETS: Dict[str, Dict[str, Any]] = {
     "rag": {
         "description": "Lossy: role, timestamp, and extracted text for retrieval",
         "product": "memory",
-    },
-    "digest": {
-        "description": "Lossy: short excerpts from extracted conversation messages",
-        "product": "digest",
     },
 }
 
@@ -212,34 +157,19 @@ def _apply_product_options(product: ProductConfig, options: Dict[str, Any]) -> P
     """Apply preset options to a product without mutating the base product."""
     options = options or {}
     overrides: Dict[str, Any] = {}
-
-    tool_output = options.get("tool_output")
-    if tool_output == "full":
-        overrides["include_tool_output"] = True
-        overrides["truncate_tool_output"] = None
-    elif tool_output == "truncated":
-        overrides["include_tool_output"] = True
-        overrides["truncate_tool_output"] = 500
-    elif tool_output == "omit":
-        overrides["include_tool_output"] = False
-        overrides["truncate_tool_output"] = None
-    elif isinstance(tool_output, int):
-        overrides["include_tool_output"] = True
-        overrides["truncate_tool_output"] = tool_output if tool_output > 0 else None
-    elif tool_output is not None:
-        raise ValueError(f"Invalid tool_output option: {tool_output!r}")
+    unknown_options = set(options) - {"truncate", "role"}
+    if unknown_options:
+        unknown = ", ".join(sorted(unknown_options))
+        raise ValueError(f"Unknown preset option(s): {unknown}")
 
     if "truncate" in options:
         value = options["truncate"]
         if value is None:
-            overrides["truncate_tool_output"] = None
+            overrides["truncate_chars"] = None
         elif isinstance(value, int):
-            overrides["truncate_tool_output"] = value if value > 0 else None
+            overrides["truncate_chars"] = value if value > 0 else None
         else:
             raise ValueError(f"Invalid truncate option: {value!r}")
-
-    if "no_reasoning" in options:
-        overrides["no_reasoning"] = bool(options["no_reasoning"])
 
     if "role" in options:
         role = str(options["role"]).strip().lower()
@@ -252,7 +182,6 @@ def _apply_product_options(product: ProductConfig, options: Dict[str, Any]) -> P
         else:
             raise ValueError(f"Invalid role option: {options['role']!r}")
 
-    # "files" and "patch" are reserved for a future extraction phase.
     return product.clone(**overrides) if overrides else product
 
 
@@ -287,5 +216,4 @@ def resolve_preset(name: str) -> List[ProductConfig]:
 # Aliases for quick access
 transcript_product = transcript
 memory_product = memory
-digest_product = digest
 faithful_product = faithful

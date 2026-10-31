@@ -1,4 +1,4 @@
-"""Configuration loading for Codex Extension Exporter.
+"""Configuration loading for Codex Session Exporter.
 
 Reads an INI file (no third-party dependencies) so the tool works on
 Python 3.8+ on both Linux and Windows.

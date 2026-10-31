@@ -1,4 +1,4 @@
-"""CLI entry point for Codex Extension Exporter.
+"""CLI entry point for Codex Session Exporter.
 
 Provides portable exports for Codex session JSONL files using products and
 presets.
@@ -30,7 +30,6 @@ from organize import (
     write_metadata,
 )
 from output import (
-    format_digest_summary,
     format_jsonl_memory,
     format_markdown_transcript,
 )
@@ -44,7 +43,7 @@ from products import (
 )
 
 
-VERSION = "2.4.0"
+VERSION = "2.6.0"
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -70,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build and return the argument parser."""
     parser = argparse.ArgumentParser(
         prog="codex_export",
-        description="Extract and export Codex conversation sessions from VS Code.",
+        description="Export local Codex session JSONL as transcripts and data products.",
         epilog="Presets: " + ", ".join(list_presets()),
     )
 
@@ -124,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--truncate",
         type=int,
         default=None,
-        help="Truncate text to N characters (0 disables truncation)",
+        help="Keep the first N characters of each extracted message (0 disables truncation)",
     )
 
     parser.add_argument(
@@ -172,7 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"codex_export {VERSION}",
+        version=f"Codex Session Exporter {VERSION}",
     )
 
     return parser
@@ -322,7 +321,7 @@ def apply_overrides(
             raise ValueError(f"Invalid role: '{role}'. Use user, assistant or both.")
 
     if truncate is not None:
-        overrides["truncate_tool_output"] = truncate if truncate > 0 else None
+        overrides["truncate_chars"] = truncate if truncate > 0 else None
 
     return product_config.clone(**overrides) if overrides else product_config
 
@@ -333,9 +332,6 @@ def output_path_for(product_name: str, display_name: str, output_dir: Path) -> P
         return output_dir / f"memory_{display_name}.jsonl"
     if product_name == "faithful":
         return output_dir / f"faithful_{display_name}.jsonl"
-    if product_name == "digest":
-        return output_dir / f"digest_{display_name}.md"
-
     return output_dir / f"session_{display_name}.md"
 
 
@@ -373,10 +369,6 @@ def process_session(
     elif product_name == "memory":
         content = format_jsonl_memory(filtered, display_name)
         label = "Memory JSONL"
-    elif product_name == "digest":
-        max_chars = getattr(product_config, "truncate_tool_output", 500) or 500
-        content = format_digest_summary(filtered, display_name, max_chars=max_chars)
-        label = "Digest summary"
     else:
         content = format_markdown_transcript(
             filtered,
@@ -655,7 +647,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if run_dir is not None:
         metadata = {
             "schema_version": 3,
-            "tool": "codex_extension_exporter",
+            "tool": "codex_session_exporter",
             "version": VERSION,
             "run_id": run_dir.name,
             "generated_at": now.isoformat(),

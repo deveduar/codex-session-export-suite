@@ -227,7 +227,7 @@ def extract_messages_from_jsonl(
     messages = []
     seen_keys = set()
 
-    def add_message(role, timestamp, text, payload, dedupe=False):
+    def add_message(role, timestamp, text, dedupe=False):
         text = (text or "").strip()
         if not role or role not in include_roles or not text:
             return
@@ -241,7 +241,6 @@ def extract_messages_from_jsonl(
             "role": role,
             "timestamp": timestamp or "",
             "text": text,
-            "raw_payload": payload,
         })
 
     with open(file_path, "r", encoding="utf-8") as f:
@@ -266,7 +265,7 @@ def extract_messages_from_jsonl(
                     content = payload.get("content", [])
                     text = extract_text_from_content(content) if content else ""
                     timestamp = data.get("timestamp", "") or payload.get("timestamp", "")
-                    add_message(role, timestamp, text, payload)
+                    add_message(role, timestamp, text)
 
             # Handle turn_context type
             elif data.get("type") == "turn_context":
@@ -276,7 +275,7 @@ def extract_messages_from_jsonl(
                     content = payload.get("content", [])
                     text = extract_text_from_content(content) if content else ""
                     timestamp = data.get("timestamp", "") or payload.get("timestamp", "")
-                    add_message(role, timestamp, text, payload)
+                    add_message(role, timestamp, text)
 
             # Handle event_msg type used by some Codex versions.
             elif data.get("type") == "event_msg":
@@ -289,6 +288,6 @@ def extract_messages_from_jsonl(
                         if not isinstance(text, str):
                             text = extract_text_from_content(text)
                         timestamp = data.get("timestamp", "") or payload.get("timestamp", "")
-                        add_message(role, timestamp, text, payload, dedupe=True)
+                        add_message(role, timestamp, text, dedupe=True)
 
     return messages

@@ -17,14 +17,12 @@ PRODUCT_TITLES = {
     "transcript": "Transcript",
     "memory": "Memory",
     "faithful": "Source JSONL",
-    "digest": "Digest",
 }
 
 PRODUCT_EXTENSIONS = {
     "transcript": ".md",
     "memory": ".jsonl",
     "faithful": ".jsonl",
-    "digest": ".md",
 }
 
 

@@ -7,8 +7,7 @@ source JSONL directly in the CLI.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 def format_markdown_transcript(
@@ -59,33 +58,6 @@ def format_markdown_transcript(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def format_markdown_conversation(
-    messages: List[dict],
-    filename: str = "session",
-) -> str:
-    """Format conversation-only transcript (no tools, no reasoning).
-    
-    Args:
-        messages: List of message dicts
-        filename: Session filename for the header
-    
-    Returns:
-        Markdown-formatted string
-    """
-    lines = [f"# Codex History: `{filename}`"]
-    lines.append("")
-    lines.append("---\n")
-    
-    for i, msg in enumerate(messages, 1):
-        label = "User" if msg.get("role") == "user" else "Codex"
-        timestamp_part = f" *({msg.get('timestamp', '')})*" if msg.get("timestamp") else ""
-        lines.append(f"### {label} - Message {i}{timestamp_part}\n\n")
-        lines.append(f"{msg['text']}\n\n")
-        lines.append("---\n")
-    
-    return "\n".join(lines)
-
-
 def format_jsonl_memory(
     messages: List[dict],
     session_name: str,
@@ -111,29 +83,3 @@ def format_jsonl_memory(
         }
         lines.append(json.dumps(entry, ensure_ascii=False))
     return "\n".join(lines)
-
-
-def format_digest_summary(
-    messages: List[dict],
-    session_name: str,
-    max_chars: int = 500,
-) -> str:
-    """Create a digest summary of a session.
-    
-    Args:
-        messages: List of message dicts
-        session_name: Name of the session
-        max_chars: Maximum characters per message summary
-    
-    Returns:
-        Digest-formatted string
-    """
-    # Simple extractive summarization: take first N chars of each message
-    summaries = []
-    for msg in messages:
-        text = msg.get("text", "")[:max_chars]
-        if len(msg.get("text", "")) > max_chars:
-            text += "..."
-        summaries.append(text)
-    
-    return f"## Session: {session_name}\n\n" + "\n\n".join(summaries)

@@ -1,2 +1,2 @@
-"""Codex Extension Exporter - Extract and export Codex conversation sessions."""
-__version__ = "2.4.0"
+"""Codex Session Exporter - Python tools for local Codex session exports."""
+__version__ = "2.6.0"
