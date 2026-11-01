@@ -22,6 +22,7 @@ class ProductConfig:
         developer: str = "include",
         message_only: bool = False,
         clean_user_prompts: bool = False,
+        strip_boilerplate: bool = False,
     ):
         self.name = name
         self.description = description
@@ -31,6 +32,7 @@ class ProductConfig:
         self.developer = developer
         self.message_only = message_only
         self.clean_user_prompts = clean_user_prompts
+        self.strip_boilerplate = strip_boilerplate
 
     def clone(self, **overrides: Any) -> "ProductConfig":
         """Return a copy with optional overrides."""
@@ -43,6 +45,7 @@ class ProductConfig:
             "developer": self.developer,
             "message_only": self.message_only,
             "clean_user_prompts": self.clean_user_prompts,
+            "strip_boilerplate": self.strip_boilerplate,
         }
         values.update(overrides)
         return ProductConfig(**values)
@@ -87,6 +90,15 @@ class ProductConfig:
                     continue
                 filtered["text"] = text
 
+            if self.strip_boilerplate and filtered.get("kind") == "message":
+                from extract import extract_user_prompt
+
+                if filtered.get("role") == "user":
+                    text = extract_user_prompt(filtered.get("text", ""))
+                    if not text:
+                        continue
+                    filtered["text"] = text
+
             selected.append(filtered)
         return selected
 
@@ -102,6 +114,13 @@ class ProductConfig:
 
             text = msg["text"]
             if self.clean_user_prompts and role == "user":
+                from extract import extract_user_prompt
+
+                text = extract_user_prompt(text)
+                if not text:
+                    continue
+
+            if self.strip_boilerplate and role == "user":
                 from extract import extract_user_prompt
 
                 text = extract_user_prompt(text)
@@ -140,13 +159,15 @@ conversation = ProductConfig(
     developer="exclude",
     message_only=True,
     clean_user_prompts=True,
+    strip_boilerplate=True,
 )
 
 memory = ProductConfig(
     name="memory",
     description="One structured JSON line per message, tool call, context block, and tool result for RAG",
     role_filter=None,
-    developer="exclude",
+    developer="include",
+    strip_boilerplate=False,
 )
 
 instructions = ProductConfig(

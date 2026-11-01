@@ -190,6 +190,13 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"Codex Session Exporter {VERSION}",
     )
 
+    parser.add_argument(
+        "--strip-boilerplate",
+        action="store_true",
+        default=None,
+        help="Remove recognized generated boilerplate from derived user prompts and conversation text",
+    )
+
     return parser
 
 
@@ -322,6 +329,7 @@ def apply_overrides(
     role: Optional[str] = None,
     truncate: Optional[int] = None,
     include_developer: bool = False,
+    strip_boilerplate: Optional[bool] = None,
 ) -> ProductConfig:
     """Apply CLI/config overrides without mutating global products."""
     overrides: Dict[str, object] = {}
@@ -339,6 +347,9 @@ def apply_overrides(
 
     if include_developer and product_config.developer == "exclude":
         overrides["developer"] = "include"
+
+    if strip_boilerplate is not None:
+        overrides["strip_boilerplate"] = bool(strip_boilerplate)
 
     if truncate is not None:
         overrides["truncate_chars"] = truncate if truncate > 0 else None
@@ -480,6 +491,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.include_developer is not None
         else config.get("include_developer", False)
     )
+    strip_boilerplate = (
+        args.strip_boilerplate
+        if args.strip_boilerplate is not None
+        else config.get("strip_boilerplate", False)
+    )
     truncate = args.truncate if args.truncate is not None else config["truncate"]
     recent_turns = (
         args.recent_turns
@@ -526,6 +542,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 role=role,
                 truncate=truncate,
                 include_developer=include_developer,
+                strip_boilerplate=strip_boilerplate,
             )
             for product_config in product_configs
         ]
@@ -763,6 +780,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "options": {
                 "role": role,
                 "include_developer": bool(include_developer),
+                "strip_boilerplate": bool(strip_boilerplate),
                 "truncate": truncate,
                 "recent_turns": recent_turns,
                 "timestamps": not no_timestamps,

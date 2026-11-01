@@ -24,6 +24,7 @@ DEFAULTS: Dict[str, Any] = {
     "products": None,
     "role": None,
     "include_developer": False,
+    "strip_boilerplate": False,
     "truncate": None,
     "recent_turns": None,
     "timestamps": True,
@@ -214,6 +215,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     if include_developer is not None:
         config["include_developer"] = _parse_bool(include_developer)
 
+    strip_boilerplate = _get(parser, "export", "strip_boilerplate")
+    if strip_boilerplate is not None:
+        config["strip_boilerplate"] = _parse_bool(strip_boilerplate)
+
     truncate = _get(parser, "export", "truncate")
     if truncate is not None:
         config["truncate"] = _parse_int(truncate)
@@ -259,6 +264,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_include_developer = _get(parser, section, "include_developer")
         if flat_include_developer is not None:
             config["include_developer"] = _parse_bool(flat_include_developer)
+
+        flat_strip_boilerplate = _get(parser, section, "strip_boilerplate")
+        if flat_strip_boilerplate is not None:
+            config["strip_boilerplate"] = _parse_bool(flat_strip_boilerplate)
 
         flat_truncate = _get(parser, section, "truncate")
         if flat_truncate is not None:

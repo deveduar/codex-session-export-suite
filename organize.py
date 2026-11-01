@@ -637,6 +637,15 @@ def write_root_index(
         f"- Preset: {metadata.get('preset') or '(none)'}",
         f"- Products: {', '.join(product_names)}",
         (
+            f"- Filters: role={metadata.get('options', {}).get('role') or 'all'}; "
+            f"developer={'on' if metadata.get('options', {}).get('include_developer') else 'off'}; "
+            f"recent_turns={metadata.get('options', {}).get('recent_turns') if metadata.get('options', {}).get('recent_turns') is not None else 'all'}"
+        ),
+        (
+            f"- Boilerplate cleanup: {'enabled' if metadata.get('options', {}).get('strip_boilerplate') else 'disabled by default'}; "
+            f"structured RAG keeps raw event blocks unless explicitly cleaned"
+        ),
+        (
             f"- Sessions: {counts.get('sessions_exported', 0)} exported, "
             f"{counts.get('sessions_skipped', 0)} skipped"
         ),
