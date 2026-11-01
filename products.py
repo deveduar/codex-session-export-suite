@@ -19,12 +19,18 @@ class ProductConfig:
         role_filter: Optional[List[str]] = None,
         truncate_chars: Optional[int] = None,
         role: Optional[str] = None,
+        developer: str = "include",
+        message_only: bool = False,
+        clean_user_prompts: bool = False,
     ):
         self.name = name
         self.description = description
         self.role_filter = role_filter or []
         self.truncate_chars = truncate_chars
         self.role = role
+        self.developer = developer
+        self.message_only = message_only
+        self.clean_user_prompts = clean_user_prompts
 
     def clone(self, **overrides: Any) -> "ProductConfig":
         """Return a copy with optional overrides."""
@@ -34,9 +40,55 @@ class ProductConfig:
             "role_filter": list(self.role_filter),
             "truncate_chars": self.truncate_chars,
             "role": self.role,
+            "developer": self.developer,
+            "message_only": self.message_only,
+            "clean_user_prompts": self.clean_user_prompts,
         }
         values.update(overrides)
         return ProductConfig(**values)
+
+    def allows_role(self, role: Optional[str]) -> bool:
+        """Return True if this product includes the given role."""
+        role = str(role or "")
+
+        if self.role_filter:
+            return role in self.role_filter
+
+        if self.role and role != self.role:
+            return False
+
+        if role == "developer":
+            return self.developer != "exclude"
+
+        if self.developer == "only":
+            return False
+
+        return True
+
+    def select_events(self, events: List[dict]) -> List[dict]:
+        """Filter events by kind and role without mutating the source list."""
+        selected = []
+        for event in events:
+            if self.message_only and event.get("kind") != "message":
+                continue
+            if not self.allows_role(event.get("role")):
+                continue
+
+            filtered = dict(event)
+            if (
+                self.clean_user_prompts
+                and filtered.get("kind") == "message"
+                and filtered.get("role") == "user"
+            ):
+                from extract import extract_user_prompt
+
+                text = extract_user_prompt(filtered.get("text", ""))
+                if not text:
+                    continue
+                filtered["text"] = text
+
+            selected.append(filtered)
+        return selected
 
     def apply(self, messages: List[dict]) -> List[dict]:
         """Apply product filtering to a list of messages."""
@@ -45,13 +97,17 @@ class ProductConfig:
         for msg in messages:
             role = msg["role"]
 
-            if self.role and role != self.role:
-                continue
-
-            if self.role_filter and role not in self.role_filter:
+            if not self.allows_role(role):
                 continue
 
             text = msg["text"]
+            if self.clean_user_prompts and role == "user":
+                from extract import extract_user_prompt
+
+                text = extract_user_prompt(text)
+                if not text:
+                    continue
+
             if self.truncate_chars and len(text) > self.truncate_chars:
                 text = text[: self.truncate_chars] + "..."
 
@@ -72,20 +128,32 @@ class ProductConfig:
 
 transcript = ProductConfig(
     name="transcript",
-    description="Chronological Markdown transcript with tool calls and results",
+    description="Chronological Markdown transcript with tool calls, results, context, and developer instructions",
     role_filter=None,
+    developer="include",
 )
 
 conversation = ProductConfig(
     name="conversation",
-    description="Markdown conversation messages only, excluding tool activity",
+    description="Clean Markdown dialogue without tool activity, generated context, or developer instructions",
     role_filter=None,
+    developer="exclude",
+    message_only=True,
+    clean_user_prompts=True,
 )
 
 memory = ProductConfig(
     name="memory",
-    description="One structured JSON line per message, tool call, and tool result for RAG",
+    description="One structured JSON line per message, tool call, context block, and tool result for RAG",
     role_filter=None,
+    developer="exclude",
+)
+
+instructions = ProductConfig(
+    name="instructions",
+    description="Developer instructions only, with no user or assistant messages",
+    role_filter=["developer"],
+    message_only=True,
 )
 
 faithful = ProductConfig(
@@ -98,6 +166,7 @@ PRODUCTS: Dict[str, ProductConfig] = {
     "transcript": transcript,
     "conversation": conversation,
     "memory": memory,
+    "instructions": instructions,
     "faithful": faithful,
 }
 
@@ -123,17 +192,21 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "product": "transcript",
     },
     "conversation": {
-        "description": "Lossy: Markdown dialogue only; explicitly excludes tool activity",
+        "description": "Lossy: clean Markdown dialogue only; excludes tool activity, generated context, and developer instructions",
         "product": "conversation",
     },
     "prompts": {
-        "description": "Lossy: user messages only",
+        "description": "Lossy: human-authored user prompts only",
         "product": "conversation",
         "role": "user",
     },
     "rag": {
         "description": "Lossy: structured messages and tool events for retrieval",
         "product": "memory",
+    },
+    "instructions": {
+        "description": "Lossy: explicit developer instructions only",
+        "product": "instructions",
     },
 }
 
@@ -228,4 +301,5 @@ def resolve_preset(name: str) -> List[ProductConfig]:
 transcript_product = transcript
 conversation_product = conversation
 memory_product = memory
+instructions_product = instructions
 faithful_product = faithful

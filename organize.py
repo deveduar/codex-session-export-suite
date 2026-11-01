@@ -17,6 +17,7 @@ PRODUCT_TITLES = {
     "transcript": "Transcript with Tool Activity",
     "conversation": "Conversation Only",
     "memory": "RAG Events",
+    "instructions": "Developer Instructions",
     "faithful": "Source JSONL",
 }
 
@@ -24,6 +25,7 @@ PRODUCT_EXTENSIONS = {
     "transcript": ".md",
     "conversation": ".md",
     "memory": ".jsonl",
+    "instructions": ".md",
     "faithful": ".jsonl",
 }
 
@@ -549,6 +551,18 @@ def _session_usage_text(session: Dict[str, Any]) -> str:
     return " / ".join(f"{value:,}" for value in values)
 
 
+def _product_item_count(session: Dict[str, Any], product_name: str) -> int:
+    """Return the count that best represents a product's content."""
+    recorded = session.get("product_items", {}).get(product_name)
+    if isinstance(recorded, int):
+        return recorded
+    if product_name == "instructions":
+        return session.get("developer_messages", 0)
+    if product_name == "memory":
+        return session.get("event_count", 0)
+    return session.get("message_count", 0)
+
+
 def write_product_index(
     run_dir: Path,
     product_name: str,
@@ -562,28 +576,39 @@ def write_product_index(
     if not product_sessions:
         return None
 
+    omitted = sum(
+        1
+        for session in sessions
+        if product_name in session.get("skipped_products", [])
+    )
     title = PRODUCT_TITLES.get(product_name, product_name.title())
     lines = [
         f"# {title} Export",
         "",
         f"- Run: `{run_id}`",
-        f"- Sessions: {len(product_sessions)}",
-        "",
-        "| Date | Session | Project | Messages | File |",
-        "|---|---|---|---|---|",
+        f"- Sessions: {len(product_sessions)} of {len(sessions)}",
     ]
+    if omitted:
+        lines.append(f"- Omitted: {omitted} sessions with no usable content")
+    lines.extend(
+        [
+            "",
+            "| Date | Session | Project | Items | File |",
+            "|---|---|---|---|---|",
+        ]
+    )
 
     for session in product_sessions:
         output = session["outputs"][product_name]
         date = str(session.get("started_at") or session.get("date") or "")[:10]
         name = _display_name(session)
         project = session.get("project") or ""
-        messages = session.get("message_count", 0)
+        items = _product_item_count(session, product_name)
         output_parts = PurePosixPath(output).parts
         relative_output = PurePosixPath(*output_parts[1:]).as_posix()
         lines.append(
             f"| {date} | {_markdown_text(name)} | {_markdown_text(project)} | "
-            f"{messages} | {_markdown_link(relative_output, Path(output).name)} |"
+            f"{items} | {_markdown_link(relative_output, Path(output).name)} |"
         )
 
     path = run_dir / product_name / "index.md"
@@ -614,6 +639,15 @@ def write_root_index(
         (
             f"- Sessions: {counts.get('sessions_exported', 0)} exported, "
             f"{counts.get('sessions_skipped', 0)} skipped"
+        ),
+        (
+            f"- Sessions with derived outputs: "
+            f"{counts.get('sessions_with_derived_output', 0)}; "
+            f"source-only: {counts.get('sessions_source_only', 0)}"
+        ),
+        (
+            f"- Sessions with messages: {counts.get('sessions_with_messages', 0)}; "
+            f"with developer instructions: {counts.get('sessions_with_developer', 0)}"
         ),
     ]
 
@@ -648,14 +682,19 @@ def write_root_index(
 
     lines.extend(["", "## Product indexes", ""])
 
+    omitted_counts = counts.get("product_omitted_counts", {})
     for product_name in product_names:
         count = sum(
             1 for session in sessions if product_name in session.get("outputs", {})
         )
         if count:
+            omitted = omitted_counts.get(product_name, 0)
             title = PRODUCT_TITLES.get(product_name, product_name.title())
+            details = f"{count} of {len(sessions)}"
+            if omitted:
+                details += f"; {omitted} omitted"
             lines.append(
-                f"- {_markdown_link(f'{product_name}/index.md', title)} ({count})"
+                f"- {_markdown_link(f'{product_name}/index.md', title)} ({details})"
             )
 
     project_groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -671,8 +710,8 @@ def write_root_index(
                     "",
                     f"### {_markdown_text(project_name)}",
                     "",
-                    "| Date | Session | Agent | Parent | Messages | Token usage | Files |",
-                    "|---|---|---|---|---:|---|---|",
+                    "| Date | Session | Agent | Parent | Messages | Developer | Token usage | Files |",
+                    "|---|---|---|---|---:|---:|---|---|",
                 ]
             )
             sessions_by_id = {
@@ -706,6 +745,7 @@ def write_root_index(
                 lines.append(
                     f"| {date} | {_markdown_text(name)} | {_markdown_text(agent)} | "
                     f"{parent} | {session.get('message_count', 0)} | "
+                    f"{session.get('developer_messages', 0)} | "
                     f"{_session_usage_text(session)} | {' · '.join(links)} |"
                 )
 

@@ -23,6 +23,7 @@ DEFAULTS: Dict[str, Any] = {
     "preset": None,
     "products": None,
     "role": None,
+    "include_developer": False,
     "truncate": None,
     "recent_turns": None,
     "timestamps": True,
@@ -209,6 +210,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     if role:
         config["role"] = role
 
+    include_developer = _get(parser, "export", "include_developer")
+    if include_developer is not None:
+        config["include_developer"] = _parse_bool(include_developer)
+
     truncate = _get(parser, "export", "truncate")
     if truncate is not None:
         config["truncate"] = _parse_int(truncate)
@@ -250,6 +255,10 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_role = _get(parser, section, "role")
         if flat_role:
             config["role"] = flat_role
+
+        flat_include_developer = _get(parser, section, "include_developer")
+        if flat_include_developer is not None:
+            config["include_developer"] = _parse_bool(flat_include_developer)
 
         flat_truncate = _get(parser, section, "truncate")
         if flat_truncate is not None:

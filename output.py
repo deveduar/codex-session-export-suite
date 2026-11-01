@@ -42,7 +42,12 @@ def format_markdown_transcript(
         if not show_role:
             header = ">"
         else:
-            label = "User" if role == "user" else "Codex" if role == "assistant" else str(role or "Message")
+            labels = {
+                "user": "User",
+                "assistant": "Codex",
+                "developer": "Developer instruction",
+            }
+            label = labels.get(role, str(role or "Message"))
             header = f"> **{label}**"
 
         if include_timestamps and msg.get("timestamp"):
@@ -79,7 +84,12 @@ def format_markdown_activity_transcript(
         timestamp = event.get("timestamp")
         if kind == "message":
             role = event.get("role")
-            label = "User" if role == "user" else "Codex"
+            labels = {
+                "user": "User",
+                "assistant": "Codex",
+                "developer": "Developer instruction",
+            }
+            label = labels.get(role, str(role or "Message"))
             heading = f"### {label}"
             if include_timestamps and timestamp:
                 heading += f" · {timestamp}"

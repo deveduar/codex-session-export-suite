@@ -45,7 +45,7 @@ from products import (
 )
 
 
-VERSION = "2.9.0"
+VERSION = "2.10.0"
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -119,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Filter chat messages and tool events by role: user, assistant, or both",
+    )
+
+    parser.add_argument(
+        "--include-developer",
+        action="store_true",
+        default=None,
+        help="Include developer instructions in products that exclude them by default",
     )
 
     parser.add_argument(
@@ -314,6 +321,7 @@ def apply_overrides(
     product_config: ProductConfig,
     role: Optional[str] = None,
     truncate: Optional[int] = None,
+    include_developer: bool = False,
 ) -> ProductConfig:
     """Apply CLI/config overrides without mutating global products."""
     overrides: Dict[str, object] = {}
@@ -329,6 +337,9 @@ def apply_overrides(
         else:
             raise ValueError(f"Invalid role: '{role}'. Use user, assistant or both.")
 
+    if include_developer and product_config.developer == "exclude":
+        overrides["developer"] = "include"
+
     if truncate is not None:
         overrides["truncate_chars"] = truncate if truncate > 0 else None
 
@@ -343,7 +354,18 @@ def output_path_for(product_name: str, display_name: str, output_dir: Path) -> P
         return output_dir / f"faithful_{display_name}.jsonl"
     if product_name == "conversation":
         return output_dir / f"conversation_{display_name}.md"
+    if product_name == "instructions":
+        return output_dir / f"instructions_{display_name}.md"
     return output_dir / f"session_{display_name}.md"
+
+
+def product_skip_reason(product_name: str) -> str:
+    """Return a human-readable reason for a product with no data."""
+    if product_name == "instructions":
+        return "no developer instructions"
+    if product_name in ("conversation", "transcript"):
+        return "no messages"
+    return "no extractable events"
 
 
 def process_session(
@@ -368,12 +390,7 @@ def process_session(
         print(f"[+] Source JSONL copied: {output_file.name}")
         return
 
-    role_filter = set(product_config.role_filter or [])
-    filtered_events = [
-        dict(event)
-        for event in events
-        if not role_filter or event.get("role") in role_filter
-    ]
+    filtered_events = [dict(event) for event in events]
     limit = product_config.truncate_chars
     if limit:
         for event in filtered_events:
@@ -393,14 +410,16 @@ def process_session(
         content = format_jsonl_memory(filtered_events, display_name)
         label = "Structured RAG JSONL"
     else:
-        messages = [event for event in filtered_events if event.get("kind") == "message"]
-        filtered_messages = product_config.apply(messages)
         content = format_markdown_transcript(
-            filtered_messages,
+            filtered_events,
             filename=display_name,
             include_timestamps=not no_timestamps,
         )
-        label = "Markdown conversation"
+        label = (
+            "Developer instructions"
+            if product_name == "instructions"
+            else "Markdown conversation"
+        )
 
     with open(output_file, "w", encoding="utf-8") as handle:
         handle.write(content)
@@ -456,6 +475,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else config.get("include_archived", False)
     )
     role = args.role if args.role is not None else config["role"]
+    include_developer = (
+        args.include_developer
+        if args.include_developer is not None
+        else config.get("include_developer", False)
+    )
     truncate = args.truncate if args.truncate is not None else config["truncate"]
     recent_turns = (
         args.recent_turns
@@ -497,7 +521,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         product_configs = [
-            apply_overrides(product_config, role=role, truncate=truncate)
+            apply_overrides(
+                product_config,
+                role=role,
+                truncate=truncate,
+                include_developer=include_developer,
+            )
             for product_config in product_configs
         ]
     except ValueError as exc:
@@ -628,11 +657,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         record["assistant_messages"] = sum(
             1 for message in messages if message.get("role") == "assistant"
         )
+        record["developer_messages"] = sum(
+            1 for message in messages if message.get("role") == "developer"
+        )
         record["event_count"] = len(events)
         if recent_turns is not None:
             record["source_message_count"] = len(all_messages)
         record["outputs"] = {}
+        record["product_items"] = {}
         record["skipped_products"] = []
+        record["skipped_product_reasons"] = {}
         record["skipped"] = False
 
         if not messages and not events:
@@ -645,10 +679,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         for product_config in product_configs:
             product_name = product_config.name
-            has_product_data = bool(messages) if product_name == "conversation" else bool(events)
-            if not has_product_data and product_name != "faithful":
+            product_events = product_config.select_events(events)
+            has_product_data = bool(product_events) or product_name == "faithful"
+            if not has_product_data:
                 record["skipped_products"].append(product_name)
+                record["skipped_product_reasons"][product_name] = product_skip_reason(
+                    product_name
+                )
                 continue
+
+            record["product_items"][product_name] = (
+                1 if product_name == "faithful" else len(product_events)
+            )
 
             if run_dir is not None:
                 output_file = (
@@ -666,7 +708,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
             process_session(
                 file_path,
-                events,
+                product_events,
                 product_config,
                 output_file,
                 display_name,
@@ -690,8 +732,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session_records.append(record)
 
     if run_dir is not None:
+        product_counts = {
+            product_name: sum(
+                1
+                for record in session_records
+                if product_name in record.get("outputs", {})
+            )
+            for product_name in product_names
+        }
+        product_omitted_counts = {
+            product_name: sum(
+                1
+                for record in session_records
+                if product_name in record.get("skipped_products", [])
+            )
+            for product_name in product_names
+        }
         metadata = {
-            "schema_version": 5,
+            "schema_version": 6,
             "tool": "codex_session_exporter",
             "version": VERSION,
             "run_id": run_dir.name,
@@ -704,6 +762,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "products": product_names,
             "options": {
                 "role": role,
+                "include_developer": bool(include_developer),
                 "truncate": truncate,
                 "recent_turns": recent_turns,
                 "timestamps": not no_timestamps,
@@ -716,6 +775,35 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "sessions_skipped": sum(
                     1 for record in session_records if record.get("skipped")
                 ),
+                "sessions_with_derived_output": sum(
+                    1
+                    for record in session_records
+                    if any(
+                        product_name != "faithful"
+                        for product_name in record.get("outputs", {})
+                    )
+                ),
+                "sessions_source_only": sum(
+                    1
+                    for record in session_records
+                    if record.get("outputs")
+                    and not any(
+                        product_name != "faithful"
+                        for product_name in record.get("outputs", {})
+                    )
+                ),
+                "sessions_with_messages": sum(
+                    1
+                    for record in session_records
+                    if record.get("message_count", 0) > 0
+                ),
+                "sessions_with_developer": sum(
+                    1
+                    for record in session_records
+                    if record.get("developer_messages", 0) > 0
+                ),
+                "product_counts": product_counts,
+                "product_omitted_counts": product_omitted_counts,
                 "files_written": files_written,
             },
             "usage_summary": summarize_token_usage(session_records),
