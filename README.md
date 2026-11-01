@@ -1,6 +1,24 @@
-# Codex Session Exporter (Python)
+# Codex Sessions Export Suite
 
-Export readable and machine friendly views of local Codex sessions. This Python CLI reads Codex session JSONL files and runs on Windows, Linux, and macOS.
+Export local Codex sessions with control over fidelity and format. A single CLI with presets for every need—from byte-for-byte source archives to clean dialogue transcripts to structured JSONL built for RAG pipelines.
+
+## Requirements
+
+- Python 3.10+
+- No external dependencies
+- Windows, Linux, or mac
+
+## Presets at a glance
+
+| Preset | Use it when you want... |
+|---|---|
+| `source` | A byte-for-byte backup |
+| `archive` | Backup + readable transcript |
+| `markdown` | A chronological human-readable log |
+| `conversation` | Clean dialogue only |
+| `prompts` | Just the human prompts |
+| `rag` | Structured JSONL for retrieval |
+| `instructions` | Only developer instructions 
 
 ## Quick start
 
@@ -27,19 +45,17 @@ python3 cli.py --preset archive --dry-run
 
 Products are output formats; presets combine products and filters.
 
-| Preset | Products and filtering | Data retention compared with source JSONL |
+| Preset | Products and filtering | Data retention |
 |---|---|---|
-| `archive` | Source JSONL and chronological transcript with tool activity | **Lossless source copy** plus a readable derived view. |
-| `source` | Source JSONL only | **Lossless.** Copies each source file byte-for-byte. |
-| `markdown` | Chronological Markdown of messages, tool calls, and results | **Lossy.** Omits source records and metadata that are not represented in the transcript. |
-| `conversation` | Clean dialogue only; excludes tool activity, generated context, and developer instructions by default | **Lossy.** Omits tool calls, tool results, context blocks, and developer instructions unless `--include-developer` is used. |
-| `prompts` | Human-authored user prompts only | **Lossy.** Removes generated context, environment blocks, automated review messages, and all assistant/tool records. |
-| `rag` | Structured JSONL of messages and tool activity | **Lossy.** Keeps useful event fields; developer instructions are included by default because retrieval benefits from explicit instructions, while raw boilerplate remains in the structured event log unless you opt into cleaning with `--strip-boilerplate`. `faithful` remains the complete source. |
-| `instructions` | Explicit developer instructions only | **Lossy.** Exports only records with `role: developer`; user, assistant, and tool events are omitted. |
+| `archive` | Source JSONL + transcript | Lossless source + readable derived view |
+| `source` | Source JSONL only | Lossless |
+| `markdown` | Human-readable transcript | Derived view |
+| `conversation` | Clean dialogue | Derived, excludes tool activity and developer text by default |
+| `prompts` | User prompts only | Derived |
+| `rag` | Structured JSONL for retrieval | Derived, includes developer records by default |
+| `instructions` | Developer instructions only | Derived |
 
-`archive` includes the same byte-for-byte source copies as `source`, then adds a chronological Markdown transcript with tool activity. Choose `source` for a source-only backup and `archive` when you also want the readable view. Use `conversation` for a clean dialogue-only Markdown export. `rag` writes messages, tool calls, tool results, and structured file-change/web-search events as separate JSONL records; developer records are included by default, and boilerplate is stripped only when you explicitly opt into `--strip-boilerplate`. `instructions` exports only explicit Codex `developer` records.
-
-Explicit `developer` records are labeled **Developer instruction** in `archive`, `markdown`, and `conversation` when included. They are not treated as assistant messages and are never reclassified from message text. Generated `<environment_context>…</environment_context>` blocks are removed from derived products while `source`/`faithful` keeps the original bytes. Known user-role boilerplate such as `AGENTS.md instructions`, `<recommended_plugins>`, IDE context envelopes, and automated approval/review prompts is removed from `prompts` and `conversation`; unknown prose is preserved rather than guessed away. In structured `rag` output, those blocks are kept by default so the raw event log remains faithful to the session; use `--strip-boilerplate` when you want the cleaned version.
+For the full behavior matrix, cleanup rules, and architecture notes, see [architecture.md](architecture.md).
 
 ## Configuration
 
@@ -52,21 +68,25 @@ products =
 role =
 include_developer = false
 strip_boilerplate = false
+layout = run
 truncate =
 recent_turns =
 timestamps = true
 include_archived = false
 ```
 
-- `preset`: The preset to use for exporting. Default is `archive`.
-- `products`: A comma-separated list of products to include in the export.
-- `role`: The role to filter by (e.g., `user`, `assistant`, `developer`).
-- `include_developer`: Whether to include developer instructions in the export. Default is `false`.
-- `strip_boilerplate`: Whether to strip boilerplate text from the export. Default is `false`.
-- `truncate`: The number of turns to include in the export. Default is all turns.
-- `recent_turns`: Whether to include only the most recent turns in the export. Default is `false`.
-- `timestamps`: Whether to include timestamps in the export. Default is `true`.
-- `include_archived`: Whether to include archived sessions in the export. Default is `false`.
+- `preset`: Default export preset.
+- `products`: Comma-separated product list.
+- `role`: Optional filter (`user`, `assistant`, `both`).
+- `include_developer`: Include developer instructions in default-clean products.
+- `strip_boilerplate`: Drop recognized generated boilerplate from derived outputs.
+- `layout`: Internal filesystem mode: `run` (default) or `flat`.
+- `truncate`: Max characters kept in message/tool bodies before truncation.
+- `recent_turns`: Keep only the most recent user turns.
+- `timestamps`: Include timestamps in Markdown output.
+- `include_archived`: Include archived sessions.
+
+The run summary and `metadata.json` track the effective options; `layout` is internal and does not appear in the public export summary.
 
 ## Check for updates
 
@@ -111,3 +131,11 @@ Options:
   --list-presets             List available products and presets
   --help                     Show this message and exit.
 ```
+
+## Disclaimer
+
+This is an unofficial community tool. It is not affiliated with, endorsed by, or sponsored by OpenAI. "Codex" is used descriptively to refer to local Codex session files. OpenAI and Codex are trademarks of their respective owners.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

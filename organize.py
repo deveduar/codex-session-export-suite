@@ -640,6 +640,7 @@ def write_root_index(
             f"role={metadata.get('options', {}).get('role') or 'all'}; "
             f"developer={'on' if metadata.get('options', {}).get('include_developer') else 'off'}; "
             f"recent_turns={metadata.get('options', {}).get('recent_turns') if metadata.get('options', {}).get('recent_turns') is not None else 'all'}; "
+            f"truncate={metadata.get('options', {}).get('truncate') if metadata.get('options', {}).get('truncate') is not None else 'off'}; "
             f"boilerplate={'on' if metadata.get('options', {}).get('strip_boilerplate') else 'off'}"
         ),
         (
