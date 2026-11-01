@@ -637,26 +637,21 @@ def write_root_index(
         f"- Preset: {metadata.get('preset') or '(none)'}",
         f"- Products: {', '.join(product_names)}",
         (
-            f"- Filters: role={metadata.get('options', {}).get('role') or 'all'}; "
+            "- Filters: "
+            f"role={metadata.get('options', {}).get('role') or 'all'}; "
             f"developer={'on' if metadata.get('options', {}).get('include_developer') else 'off'}; "
-            f"recent_turns={metadata.get('options', {}).get('recent_turns') if metadata.get('options', {}).get('recent_turns') is not None else 'all'}"
+            f"recent_turns={metadata.get('options', {}).get('recent_turns') if metadata.get('options', {}).get('recent_turns') is not None else 'all'}; "
+            f"boilerplate={'on' if metadata.get('options', {}).get('strip_boilerplate') else 'off'}"
         ),
         (
-            f"- Boilerplate cleanup: {'enabled' if metadata.get('options', {}).get('strip_boilerplate') else 'disabled by default'}; "
-            f"structured RAG keeps raw event blocks unless explicitly cleaned"
+            "- Sessions: "
+            f"{counts.get('sessions_exported', 0)} exported, {counts.get('sessions_skipped', 0)} skipped | "
+            f"derived={counts.get('sessions_with_derived_output', 0)} | source-only={counts.get('sessions_source_only', 0)}"
         ),
         (
-            f"- Sessions: {counts.get('sessions_exported', 0)} exported, "
-            f"{counts.get('sessions_skipped', 0)} skipped"
-        ),
-        (
-            f"- Sessions with derived outputs: "
-            f"{counts.get('sessions_with_derived_output', 0)}; "
-            f"source-only: {counts.get('sessions_source_only', 0)}"
-        ),
-        (
-            f"- Sessions with messages: {counts.get('sessions_with_messages', 0)}; "
-            f"with developer instructions: {counts.get('sessions_with_developer', 0)}"
+            "- Messages: "
+            f"{counts.get('sessions_with_messages', 0)} sessions with messages | "
+            f"developer={counts.get('sessions_with_developer', 0)}"
         ),
     ]
 
@@ -664,30 +659,19 @@ def write_root_index(
         found = usage_summary.get("sessions_with_usage", 0)
         total = len(sessions)
         totals_status = usage_summary.get("totals_status", "unavailable")
-        coverage = "partial" if totals_status == "partial" else totals_status
-        lines.extend(
-            [
-                f"- Token usage: recorded for {found}/{total} sessions; totals {coverage}.",
-            ]
+        lines.append(
+            f"- Token usage: {found}/{total} sessions recorded; totals {totals_status}."
         )
         totals = usage_summary.get("totals")
         if isinstance(totals, dict):
             lines.append(
-                "- Recorded token totals: "
+                "- Totals: "
                 f"input {totals.get('input_tokens', 0):,}; "
                 f"cached input {totals.get('cached_input_tokens', 0):,}; "
-                f"cache-write input {totals.get('cache_write_input_tokens', 0):,}; "
                 f"output {totals.get('output_tokens', 0):,}; "
                 f"reasoning output {totals.get('reasoning_output_tokens', 0):,}; "
                 f"total {totals.get('total_tokens', 0):,}."
             )
-        lines.append(
-            "- Per-session order: input / cached input / cache-write input / output / "
-            "reasoning output / total. Cached input is included in input; reasoning "
-            "output is included in output. Counts cover the source thread, including "
-            "when the export uses `--recent-turns`. `unavailable` means Codex recorded "
-            "no usable usage snapshot."
-        )
 
     lines.extend(["", "## Product indexes", ""])
 
