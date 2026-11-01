@@ -68,6 +68,16 @@ include_archived = false
 - `timestamps`: Whether to include timestamps in the export. Default is `true`.
 - `include_archived`: Whether to include archived sessions in the export. Default is `false`.
 
+## Check for updates
+
+Compare the current Codex session set with the newest export run:
+
+```bash
+python3 cli.py --check-updates
+```
+
+This inspects the latest export metadata under `codex_exports/` and reports which sessions are new, modified, unchanged, or missing from the current scan. It is useful when you want to confirm whether a fresh Codex export has already been captured or whether anything changed since the last run.
+
 ## Examples
 
 ```bash
@@ -76,6 +86,7 @@ python3 cli.py --preset rag --strip-boilerplate
 python3 cli.py --preset prompts
 python3 cli.py --preset conversation
 python3 cli.py --preset conversation --include-developer
+python3 cli.py --check-updates
 ```
 
 ## CLI Usage
@@ -93,8 +104,10 @@ Options:
   --strip-boilerplate        Remove recognized boilerplate from derived prompts/conversation output
   --truncate N                Keep the first N characters of each message or tool body; 0 disables truncation
   --recent-turns             Include only the most recent turns in the export
-  --timestamps                Include timestamps in the export
+  --timestamps               Include timestamps in the export
   --include-archived         Include archived sessions in the export
+  --check-updates            Compare current Codex sessions with the latest export run
   --dry-run                  Preview the planned paths without writing files
+  --list-presets             List available products and presets
   --help                     Show this message and exit.
 ```

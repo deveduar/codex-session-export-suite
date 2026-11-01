@@ -640,7 +640,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[*] Configuration: {config_path}")
 
     print(f"[*] Codex directory: {codex_path}")
-    print(f"[*] Layout: {layout}")
     if include_archived:
         print("[*] Archived sessions: included")
     if run_dir is not None:
@@ -773,7 +772,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "generated_at": now.isoformat(),
             "codex_dir": str(codex_path.absolute()),
             "output_dir": str(output_base.absolute()),
-            "layout": "products",
             "include_archived": bool(include_archived),
             "preset": selected_preset,
             "products": product_names,

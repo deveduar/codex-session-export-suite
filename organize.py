@@ -632,7 +632,6 @@ def write_root_index(
         "",
         f"- Generated: {metadata.get('generated_at', '')}",
         f"- Codex directory: `{metadata.get('codex_dir') or ''}`",
-        f"- Layout: {metadata.get('layout', '')}",
         f"- Archived sessions included: {'yes' if metadata.get('include_archived') else 'no'}",
         f"- Preset: {metadata.get('preset') or '(none)'}",
         f"- Products: {', '.join(product_names)}",
