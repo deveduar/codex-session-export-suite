@@ -1,4 +1,4 @@
-# Codex Sessions Export Suite
+# Codex Session Export Suite
 
 Export local Codex sessions with control over fidelity and format. A single CLI with presets for every need—from byte-for-byte source archives to clean dialogue transcripts to structured JSONL built for RAG pipelines.
 
@@ -23,13 +23,22 @@ Export local Codex sessions with control over fidelity and format. A single CLI 
 ## Quick start
 
 ```bash
-python3 cli.py --preset archive
 python3 cli.py --preset markdown
 python3 cli.py --preset source
+python3 cli.py --preset archive
+
+python3 cli.py --preset rag
+python3 cli.py --preset rag --strip-boilerplate
+
+python3 cli.py --preset prompts
+python3 cli.py --preset conversation
+python3 cli.py --preset conversation --include-developer
 
 ```
 
-On Windows, use `py cli.py --preset archive`. The tool looks for Codex under `CODEX_HOME` or `~/.codex` (`%USERPROFILE%\.codex` on Windows). To select an input explicitly, pass the Codex directory, its `sessions` directory, a subdirectory, or one `.jsonl` file:
+On Windows, use `py cli.py --preset archive`. 
+
+The tool looks for Codex under `CODEX_HOME` or `~/.codex` (`%USERPROFILE%\.codex` on Windows). To select an input explicitly, pass the Codex directory, its `sessions` directory, a subdirectory, or one `.jsonl` file:
 
 ```bash
 python3 cli.py /path/to/.codex --preset archive
@@ -97,17 +106,6 @@ python3 cli.py --check-updates
 ```
 
 This inspects the latest export metadata under `codex_exports/` and reports which sessions are new, modified, unchanged, or missing from the current scan. It is useful when you want to confirm whether a fresh Codex export has already been captured or whether anything changed since the last run.
-
-## Examples
-
-```bash
-python3 cli.py --preset rag
-python3 cli.py --preset rag --strip-boilerplate
-python3 cli.py --preset prompts
-python3 cli.py --preset conversation
-python3 cli.py --preset conversation --include-developer
-python3 cli.py --check-updates
-```
 
 ## CLI Usage
 
