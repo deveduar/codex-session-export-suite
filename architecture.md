@@ -2,114 +2,119 @@
 
 ## Purpose
 
-This project turns local Codex session JSONL files into exportable, readable artifacts. The CLI supports different output modes, from lossless source copies to derived transcripts and structured JSONL for retrieval pipelines.
+This project turns local Codex session JSONL files into exportable artifacts for humans, debugging, and indexing workflows. The CLI focuses on a clean split between:
 
-## High-level structure
+- actual output formats (`products`)
+- named export recipes (`presets`)
+- effective runtime configuration (`ResolvedProduct`)
 
-- `cli.py` — command-line entry point and orchestration
-- `config.py` — configuration parsing and validation
-- `extract.py` — source parsing, role detection, content cleanup, and event filtering
-- `products.py` — product definitions and preset metadata
-- `output.py` — formatting for Markdown and JSONL export files
-- `organize.py` — run directory creation, metadata writing, and run/index generation
-- `README.md` — user-facing quick start and usage notes
+## Core model
 
-## Export model
+The exporter uses three distinct layers:
 
-The tool works in two layers:
+1. ProductSpec
+   - A real output format.
+   - Examples: `transcript`, `memory`, `rag`, `faithful`.
+   - It defines what the format is, not how a given export is filtered.
 
-1. Product selection
-   - A product is a concrete output format, such as `conversation`, `transcript`, `memory`, or `faithful`.
-   - Each product defines what kind of events are included and how they are formatted.
+2. Preset
+   - A named export recipe that combines one or more base products with a concrete policy.
+   - Examples: `archive`, `source`, `markdown`, `conversation`, `prompts`, `instructions`.
+   - A preset is not a product; it is a use-case bundle.
 
-2. Preset selection
-   - A preset combines products and filters into a common use case.
-   - Examples include `archive`, `conversation`, `prompts`, `rag`, and `instructions`.
+3. ResolvedProduct
+   - The effective runtime state for one product in one export run.
+   - This is where role filtering, developer inclusion, boilerplate stripping, truncation, and recent-turn trimming actually live.
 
-This separation keeps the system flexible: users can pick a preset for common workflows or compose a custom product list when they need a specific output.
+This separation avoids the classic bug where product identity and export policy were mixed together.
 
-## Event processing pipeline
+## Base products
 
-The main flow is:
+These are the real base output formats:
 
-1. Discover JSONL session files from the Codex directory
-2. Read the source content and metadata
-3. Extract events from each session
-4. Apply role, developer, and boilerplate rules
-5. Optionally trim recent turns or truncate long content
-6. Generate each product file
-7. Collect session summaries and write run metadata/index files
+- `transcript` — chronological Markdown transcript with tool activity and context
+- `memory` — raw structured JSONL for retrieval/debugging pipelines
+- `rag` — normalized message JSONL for embeddings/vector stores
+- `faithful` — byte-for-byte copy of the original session JSONL
 
-## Product behavior
+A product is not “clean” or “raw” by default. Its behavior is defined by the runtime policy that is applied when it is exported.
 
-### Source-faithful products
+## Presets
 
-- `faithful` copies the original JSONL file without transformation.
-- `source` also keeps byte-for-byte copies in the export set.
+Presets are the user-facing export modes. They are recipes, not product identities.
 
-These are the lossless outputs used for backups and audits.
+- `archive` — source JSONL + transcript
+- `source` — source-only lossless copy
+- `markdown` — transcript view
+- `conversation` — clean dialogue-only transcript; excludes developer text and tool activity by default
+- `prompts` — user prompts only
+- `memory` — raw retrieval/debugging events, includes developer records by default
+- `rag` — normalized message documents for embeddings; excludes developer text by default
+- `instructions` — developer instructions only
 
-### Derived products
+The important rule is simple:
 
-- `transcript` writes a chronological Markdown transcript with tool activity.
-- `conversation` writes a cleaned dialogue view and omits tool activity and developer instructions by default.
-- `prompts` exports only relevant user-authored prompt text.
-- `instructions` exports explicit developer instruction records.
-- `memory` writes a raw, source-faithful event stream for retrieval/debugging; it retains message, tool, context, and output records including developer events unless a caller explicitly filters them out.
-- `rag` writes a normalized per-message JSONL stream meant for embeddings and LangChain-style ingestion; it is message-oriented and excludes developer content by default unless `--include-developer` is passed for a product that allows it.
+- same product can be reused under different presets
+- same preset can resolve to different effective runtime behavior depending on CLI/config overrides
 
-## Filtering and cleanup policies
+## Export pipeline
 
-The exporter intentionally distinguishes between:
+The normal flow is:
 
-- source fidelity
-- user-facing readability
-- raw retrieval events
-- normalized ingestion documents
+1. Discover Codex session files
+2. Parse each JSONL session into events
+3. Apply session-level filtering and cleanup
+4. Resolve the selected preset into concrete per-product runtime configs
+5. Format each product
+6. Write the run directory, metadata, and index files
 
-Some cleanup is default in derived output:
+## Runtime policy
 
-- generated environment context is removed from conversational exports
-- boilerplate is stripped only when explicitly requested for some products
-- developer instructions are excluded from default conversation and `rag` output unless requested
+The actual export policy is resolved at runtime and stored in each `ResolvedProduct`:
 
-This keeps raw session data available in source-faithful products while producing cleaner artifacts for human review and indexing.
+- role filter (`user`, `assistant`, `both`)
+- developer inclusion mode (`include`, `exclude`, `only`)
+- message-only mode
+- prompt cleaning
+- boilerplate stripping
+- truncation length
+- recent-turn retention
+
+This is why a format like `transcript` can appear in several preset variants without the product itself pretending to know which policy is correct.
+
+## Source fidelity vs derived output
+
+The exporter intentionally separates different kinds of output:
+
+- source-faithful output: original session copies and raw event data
+- human-readable output: transcript and cleaned dialogue views
+- retrieval-oriented output: memory and normalized message JSONL
+
+These are different uses, not different “types of product truth”.
 
 ## Runs and metadata
 
-Each export creates a run directory under `codex_exports/` containing:
+Each export creates a run under `codex_exports/` containing:
 
-- `metadata.json` — machine-readable summary of the run
-- `index.md` — human-readable summary of the export
-- per-product subfolders and generated files
+- `metadata.json` — machine-readable run summary
+- `index.md` — human-readable summary
+- generated product files and folders
 
-The metadata captures:
-
-- selected preset and products
-- filters such as role, recent turns, and developer inclusion
-- whether archived sessions were included
-- session-level output counts and product skips
-- source fingerprints for change detection
-
-## Change detection
-
-The `--check-updates` command compares the current Codex scan with the latest export run by using source fingerprints from session records. This helps determine whether sessions are new, modified, unchanged, or missing from the current scan without relying on a fragile timestamp-only heuristic.
+The metadata records the effective run configuration, including the selected preset and the resolved filters, so the real behavior is always traceable.
 
 ## Layout policy
 
-The exporter supports two filesystem layouts:
+The exporter supports two on-disk layouts:
 
-- `run` — default, creates a timestamped run directory
-- `flat` — writes files directly into the output directory
+- `run` — default, timestamped run folder
+- `flat` — direct-write output directory
 
-This layout setting is internal to the on-disk structure and is not surfaced in the public run summary or metadata JSON because it is not part of the exported content semantics.
+This is an internal storage choice and is not treated as part of the exported content semantics.
 
-## Notes on skipped products
+## Change detection
 
-A product may be marked as skipped for a session when it has no exportable content for that specific product. This does not mean the session is dropped from the run. It means only that the selected export format had no relevant data in that session.
+`--check-updates` compares the current Codex scan against the latest export run using session fingerprints and output metadata. This helps detect new, modified, unchanged, or missing sessions without relying only on file timestamps.
 
-For example, a session may contain metadata and initialization records but no visible transcript content. It can still be included in the run while `transcript` remains skipped for that session.
+## Notes
 
-## Future growth
-
-The current code is intentionally compact and CLI-first. If the project later needs packaging or reuse as a library, it can be moved into a standard `src/` package layout while keeping the CLI as the public entry point.
+The project is intentionally compact and CLI-first. The code remains easy to inspect, but the architecture is explicit: product identity is real, preset composition is policy-driven, and the resolved runtime configuration is the final truth for each exported file.

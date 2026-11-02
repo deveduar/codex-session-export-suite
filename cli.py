@@ -37,7 +37,8 @@ from output import (
     format_markdown_activity_transcript,
 )
 from products import (
-    ProductConfig,
+    ProductSpec,
+    ResolvedProduct,
     get_preset,
     get_product,
     list_presets,
@@ -112,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         nargs="+",
         default=None,
-        help=f"Products to export: {', '.join(list_products())}",
+        help=f"Base products to export: {', '.join(list_products())}",
     )
 
     parser.add_argument(
@@ -326,36 +327,36 @@ def preset_product_names(name: str) -> List[str]:
 
 
 def apply_overrides(
-    product_config: ProductConfig,
+    product_config: ResolvedProduct,
     role: Optional[str] = None,
     truncate: Optional[int] = None,
     include_developer: bool = False,
     strip_boilerplate: Optional[bool] = None,
-) -> ProductConfig:
+) -> ResolvedProduct:
     """Apply CLI/config overrides without mutating global products."""
-    overrides: Dict[str, object] = {}
+    config = product_config.clone()
 
     if role:
         normalized_role = str(role).strip().lower()
         if normalized_role == "both":
-            overrides["role_filter"] = []
-            overrides["role"] = None
+            config.role_filter = []
+            config.role = None
         elif normalized_role in ("user", "assistant"):
-            overrides["role_filter"] = [normalized_role]
-            overrides["role"] = None
+            config.role_filter = [normalized_role]
+            config.role = None
         else:
             raise ValueError(f"Invalid role: '{role}'. Use user, assistant or both.")
 
-    if include_developer and product_config.developer == "exclude":
-        overrides["developer"] = "include"
+    if include_developer and config.developer == "exclude":
+        config.developer = "include"
 
     if strip_boilerplate is not None:
-        overrides["strip_boilerplate"] = bool(strip_boilerplate)
+        config.strip_boilerplate = bool(strip_boilerplate)
 
     if truncate is not None:
-        overrides["truncate_chars"] = truncate if truncate > 0 else None
+        config.truncate_chars = truncate if truncate > 0 else None
 
-    return product_config.clone(**overrides) if overrides else product_config
+    return config
 
 
 def output_path_for(product_name: str, display_name: str, output_dir: Path) -> Path:
@@ -383,7 +384,7 @@ def product_skip_reason(product_name: str) -> str:
 def process_session(
     file_path: Path,
     events: List[dict],
-    product_config: ProductConfig,
+    product_config: ResolvedProduct,
     output_file: Path,
     display_name: str,
     no_timestamps: bool = False,
@@ -464,7 +465,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.list_presets:
-        print("Products:")
+        print("Base products:")
         for product_name in list_products():
             product = get_product(product_name)
             print(f"  - {product_name}: {product.description}")
@@ -475,7 +476,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             preset = get_preset(preset_name)
             products = ", ".join(preset_product_names(preset_name))
             print(f"  - {preset_name}: {preset['description']}")
-            print(f"    products: {products}")
+            print(f"    recipe: {products}")
 
         return 0
 
@@ -526,17 +527,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     selected_preset: Optional[str] = None
     try:
         if args.products:
-            product_configs = [get_product(name) for name in args.products]
+            product_configs = [
+                ResolvedProduct(get_product(name))
+                for name in args.products
+            ]
         elif args.preset:
             selected_preset = args.preset
             product_configs = resolve_preset(args.preset)
         elif config.get("products"):
-            product_configs = [get_product(name) for name in config["products"]]
+            product_configs = [
+                ResolvedProduct(get_product(name))
+                for name in config["products"]
+            ]
         elif config.get("preset"):
             selected_preset = str(config["preset"])
             product_configs = resolve_preset(selected_preset)
         else:
-            product_configs = [get_product("transcript")]
+            product_configs = [ResolvedProduct(get_product("transcript"))]
     except (KeyError, ValueError) as exc:
         print(f"[!] Error: {exc}")
         print("Use --list-presets to see available options.")
@@ -780,6 +787,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "codex_dir": str(codex_path.absolute()),
             "output_dir": str(output_base.absolute()),
             "include_archived": bool(include_archived),
+            "recent_turns": recent_turns,
+            "timestamps": not no_timestamps,
             "preset": selected_preset,
             "products": product_names,
             "resolved_products": [
@@ -795,12 +804,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 }
                 for product in product_configs
             ],
-            "options": {
-                "role": role,
-                "truncate": truncate,
-                "recent_turns": recent_turns,
-                "timestamps": not no_timestamps,
-            },
             "counts": {
                 "sessions_found": len(jsonl_files),
                 "sessions_exported": sum(

@@ -618,6 +618,76 @@ def write_product_index(
     return path
 
 
+def _format_policy_value(value: Any, default: str = "default") -> str:
+    """Format a policy value for display in metadata/index summaries."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return str(value)
+
+
+def _summarize_resolved_products(resolved_products: List[Dict[str, Any]]) -> str:
+    """Produce a concise, human-readable summary of the effective preset policy."""
+    if not resolved_products:
+        return "none"
+
+    pieces = []
+    for item in resolved_products:
+        name = item.get("name") or "unknown"
+        role = item.get("role") or item.get("role_filter")
+        if role:
+            role_label = ", ".join(str(part) for part in role) if isinstance(role, list) else str(role)
+        else:
+            role_label = "all"
+
+        developer = item.get("developer")
+        message_only = item.get("message_only")
+        clean_user_prompts = item.get("clean_user_prompts")
+        strip_boilerplate = item.get("strip_boilerplate")
+        truncate_value = item.get("truncate_chars")
+
+        details = [
+            f"{name}:role={_format_policy_value(role_label, 'all')}",
+            f"developer={_format_policy_value(developer, 'default')}",
+            f"message_only={_format_policy_value(message_only, 'off')}",
+            f"clean_prompts={_format_policy_value(clean_user_prompts, 'off')}",
+            f"boilerplate={_format_policy_value(strip_boilerplate, 'off')}",
+            f"truncate={_format_policy_value(truncate_value, 'off')}",
+        ]
+        pieces.append("; ".join(details))
+
+    return " | ".join(pieces)
+
+
+def _preset_summary(resolved_products: List[Dict[str, Any]]) -> str:
+    """Build a plain-English summary of the preset's actual effective policy."""
+    if not resolved_products:
+        return "manual product selection"
+
+    labels = []
+    for item in resolved_products:
+        name = item.get("name") or "product"
+        bits = [name]
+        if item.get("developer"):
+            bits.append(f"developer={item.get('developer')}")
+        if item.get("message_only"):
+            bits.append("message_only")
+        if item.get("clean_user_prompts"):
+            bits.append("clean_prompts")
+        if item.get("strip_boilerplate"):
+            bits.append("strip_boilerplate")
+        role_filter = item.get("role_filter") or []
+        if isinstance(role_filter, list) and role_filter:
+            bits.append(f"role={','.join(str(v) for v in role_filter)}")
+        elif item.get("role"):
+            bits.append(f"role={item.get('role')}")
+        if item.get("truncate_chars") is not None:
+            bits.append(f"truncate={item.get('truncate_chars')}")
+        labels.append("(" + "; ".join(bits) + ")")
+    return " | ".join(labels)
+
+
 def write_root_index(
     run_dir: Path,
     metadata: Dict[str, Any],
@@ -629,6 +699,19 @@ def write_root_index(
     usage_summary = metadata.get("usage_summary") or {}
     run_id = metadata.get("run_id", run_dir.name)
     resolved_products = metadata.get("resolved_products") or []
+    policy_summary = _summarize_resolved_products(resolved_products)
+    preset_summary = _preset_summary(resolved_products)
+
+    role_values = []
+    for item in resolved_products:
+        role = item.get("role")
+        if role:
+            role_values.append(str(role))
+        role_filter = item.get("role_filter") or []
+        if isinstance(role_filter, list):
+            role_values.extend(str(part) for part in role_filter)
+
+    role_label = ", ".join(sorted(set(role_values))) if role_values else "all"
     developer_states = {
         item.get("name"): item.get("developer") for item in resolved_products if item.get("name")
     }
@@ -643,18 +726,14 @@ def write_root_index(
     boilerplate_label = ", ".join(
         f"{name}={('on' if active else 'off')}" for name, active in boilerplate_states.items()
     ) if boilerplate_states else "none"
-    role_values = [
-        item.get("role")
+    truncate_states = {
+        item.get("name"): item.get("truncate_chars")
         for item in resolved_products
-        if item.get("role")
-    ]
-    role_label = (
-        ", ".join(sorted(set(role_values)))
-        if role_values
-        else "all"
-    )
-    recent_turns = metadata.get("options", {}).get("recent_turns")
-    truncate_value = metadata.get("options", {}).get("truncate")
+        if item.get("name")
+    }
+    truncate_label = ", ".join(
+        f"{name}={value if value is not None else 'off'}" for name, value in truncate_states.items()
+    ) if truncate_states else "none"
 
     lines = [
         f"# Codex Export Run: `{run_id}`",
@@ -664,12 +743,13 @@ def write_root_index(
         f"- Archived sessions included: {'yes' if metadata.get('include_archived') else 'no'}",
         f"- Preset: {metadata.get('preset') or '(none)'}",
         f"- Products: {', '.join(product_names)}",
+        f"- Preset behavior: {preset_summary}",
+        f"- Effective policy: {policy_summary}",
         (
             "- Filters: "
             f"role={role_label}; "
             f"developer={developer_label}; "
-            f"recent_turns={recent_turns if recent_turns is not None else 'all'}; "
-            f"truncate={truncate_value if truncate_value is not None else 'off'}; "
+            f"truncate={truncate_label}; "
             f"boilerplate={boilerplate_label}"
         ),
         (
