@@ -117,14 +117,20 @@ This is an internal storage choice and is not treated as part of the exported co
 
 ## Configuration files and CLI overrides
 
-The exporter supports configuration defaults through an INI file, but those defaults are not treated as the final truth of a run. The input path to the Codex session source is optional and is auto-detected when omitted.
-
-The resolution order is:
+Configuration values are defaults, not final truth. The exporter resolves settings in this order:
 
 1. explicit `--config <path>`
 2. local `./codex_export.ini`
 3. per-user config in the OS config directory
 4. built-in defaults
+
+The Codex session input path itself is optional; when omitted, the exporter auto-detects the local Codex install.
+
+Example:
+
+```bash
+python3 cli.py --config ./codex_export.ini --preset archive
+```
 
 The INI file is a default source for values such as:
 
@@ -141,16 +147,9 @@ The INI file is a default source for values such as:
 - `timestamps`
 - `include_archived`
 
-These values are then overridden at runtime by explicit CLI flags. In other words:
+These values are then overridden at runtime by explicit CLI flags. The final effective state for a run is what matters: preset defaults are a starting point, CLI flags define the actual export, and `metadata.json` records the real runtime configuration.
 
-- config file = default recipe and run defaults
-- CLI flags = final runtime override for this execution
-- metadata = effective state of the resulting export
-
-This is why a run created with `--preset conversation --include-developer` is not the same as a run whose preset is literally mutated. The preset still defines the base recipe, but the final resolved product state for that run is the truth that gets exported and recorded.
-
-
-The following options are available in the configuration file (`codex_export.ini`) under the `[export]` section:
+The following options are available in the config file under the `[export]` section:
 
 ```ini
 [export]
@@ -177,8 +176,6 @@ include_archived = false
 - `timestamps`: Include timestamps in Markdown output for this run.
 - `include_archived`: Include archived sessions for this run.
 
-These values act as defaults for the local configuration and may be overridden by CLI flags for a specific export run. The run summary and `metadata.json` track the effective export state for that run; `layout` remains an internal filesystem detail and does not appear in the public export summary.
-
 ## CLI combinations and constraints
 
 The CLI supports several valid ways to choose the export behavior, but they are not semantically equivalent.
@@ -201,7 +198,7 @@ Example:
 python3 cli.py --products transcript memory --output ./exports
 ```
 
-This bypasses presets and resolves directly from the base product list.
+This bypasses preset resolution and applies the product list directly.
 
 ### 3. Preset + runtime overrides
 
@@ -229,8 +226,8 @@ This bypasses preset resolution entirely and applies the override directly to th
 - `--preset` and `--products` are mutually exclusive in intent: one selects a recipe, the other selects an explicit product list.
 - `--role`, `--truncate`, `--include-developer`, and `--strip-boilerplate` are product/runtime overrides.
 - `--recent-turns`, `--no-timestamps`, and `--include-archived` are run-level settings and affect the session scan/export as a whole.
-- Values from the INI file are defaults only. A CLI flag always wins for that execution.
-- The exported metadata must describe the resolved, effective run state, not the unmodified preset defaults.
+- A CLI flag always wins over config defaults for that execution.
+- The exported metadata must describe the resolved runtime state, not the unmodified preset defaults.
 
 In short: the preset is the starting recipe, the CLI is the override layer, and the metadata records the final effective state of the run.
 
