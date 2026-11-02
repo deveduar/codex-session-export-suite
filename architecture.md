@@ -234,3 +234,7 @@ In short: the preset is the starting recipe, the CLI is the override layer, and 
 ## Notes
 
 The project is intentionally compact and CLI-first. The code remains easy to inspect, but the architecture is explicit: product identity is real, preset composition is policy-driven, and the resolved runtime configuration is the final truth for each exported file.
+
+This is not a mathematically pure layering model in the strict sense: presets define default policy, but a specific run may still override those defaults via `--config` or CLI flags. The important invariant is that the base product remains neutral; the override happens on a resolved runtime copy, not by mutating the product definition itself.
+
+For example, a preset such as `conversation` may default to `developer=exclude` and `strip_boilerplate=true`, but a single run can still resolve to a different effective state by passing `--include-developer` or a different `--role`. In other words, preset values are the default recipe, while `ResolvedProduct` is the actual truth for that export run.
