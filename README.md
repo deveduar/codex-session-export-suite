@@ -38,12 +38,23 @@ python3 cli.py --preset conversation --include-developer
 
 ```
 
-On Windows, use `py cli.py --preset archive`. 
+On Windows, use `py cli.py --preset archive`.
 
-The tool looks for Codex under `CODEX_HOME` or `~/.codex` (`%USERPROFILE%\.codex` on Windows). To select an input explicitly, pass the Codex directory, its `sessions` directory, a subdirectory, or one `.jsonl` file:
+## Input and output paths
+
+The Codex input path is optional. If you omit it, the tool auto-detects the local Codex install (`CODEX_HOME`, `~/.codex`, or `%USERPROFILE%\.codex` on Windows).
+
+If you want to point to a specific source explicitly, you can pass the Codex directory, its `sessions` directory, a subdirectory, or a single `.jsonl` file:
 
 ```bash
 python3 cli.py /path/to/.codex --preset archive
+```
+
+The export destination is controlled with `-o` / `--output` and defaults to the configured output directory or `./codex_exports`:
+
+```bash
+python3 cli.py --preset archive --output ./exports
+python3 cli.py --preset conversation --output "C:\\tmp\\codex-export"
 ```
 
 Preview the planned paths without writing files:
@@ -51,10 +62,10 @@ Preview the planned paths without writing files:
 ```bash
 python3 cli.py --preset archive --dry-run
 ```
-
+ 
 ## Products and presets
 
-Products are output formats; presets combine products and filters.
+Products are output formats. Presets are named recipes that choose a product set and default filter policy. A preset is not the final runtime state of a run: when the CLI passes flags like `--include-developer`, `--role`, `--truncate`, or `--strip-boilerplate`, those values override the preset for that run only.
 
 | Preset | Products and filtering | Data retention |
 |---|---|---|
@@ -69,36 +80,19 @@ Products are output formats; presets combine products and filters.
 
 For the full behavior matrix, cleanup rules, and architecture notes, see [architecture.md](architecture.md).
 
-## Configuration
+## Configuration file
 
-The following options are available in the configuration file (`codex-export.ini`) under the `[export]` section:
+The INI file is optional. It is only used when you explicitly tell the CLI which file to load via `--config`.
 
-```ini
-[export]
-preset = archive
-products =
-role =
-include_developer = false
-strip_boilerplate = false
-layout = run
-truncate =
-recent_turns =
-timestamps = true
-include_archived = false
+Example:
+
+```bash
+python3 cli.py --config ./codex_export.ini --preset archive
 ```
 
-- `preset`: Default export preset.
-- `products`: Comma-separated product list.
-- `role`: Optional filter (`user`, `assistant`, `both`).
-- `include_developer`: Include developer instructions in default-clean products.
-- `strip_boilerplate`: Drop recognized generated boilerplate from derived outputs.
-- `layout`: Internal filesystem mode: `run` (default) or `flat`.
-- `truncate`: Max characters kept in message/tool bodies before truncation.
-- `recent_turns`: Keep only the most recent user turns.
-- `timestamps`: Include timestamps in Markdown output.
-- `include_archived`: Include archived sessions.
+The exporter will also auto-detect a local `./codex_export.ini` if present, but a custom `--config` path is the clearest way to force a specific configuration for one run. CLI flags still override the config values for the current execution.
 
-The run summary and `metadata.json` track the effective options; `layout` is internal and does not appear in the public export summary.
+For the full precedence rules, preset-vs-runtime behavior, and metadata semantics, see [architecture.md](architecture.md).
 
 ## Check for updates
 
