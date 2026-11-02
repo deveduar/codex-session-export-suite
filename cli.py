@@ -32,6 +32,7 @@ from organize import (
 )
 from output import (
     format_jsonl_memory,
+    format_jsonl_rag,
     format_markdown_transcript,
     format_markdown_activity_transcript,
 )
@@ -419,7 +420,13 @@ def process_session(
         label = "Markdown transcript"
     elif product_name == "memory":
         content = format_jsonl_memory(filtered_events, display_name)
-        label = "Structured RAG JSONL"
+        label = "Structured retrieval JSONL"
+    elif product_name == "rag":
+        content = format_jsonl_rag(
+            [event for event in filtered_events if event.get("kind") == "message"],
+            display_name,
+        )
+        label = "Normalized RAG JSONL"
     else:
         content = format_markdown_transcript(
             filtered_events,
@@ -775,10 +782,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "include_archived": bool(include_archived),
             "preset": selected_preset,
             "products": product_names,
+            "resolved_products": [
+                {
+                    "name": product.name,
+                    "role": product.role,
+                    "role_filter": list(product.role_filter),
+                    "developer": product.developer,
+                    "message_only": bool(product.message_only),
+                    "clean_user_prompts": bool(product.clean_user_prompts),
+                    "strip_boilerplate": bool(product.strip_boilerplate),
+                    "truncate_chars": product.truncate_chars,
+                }
+                for product in product_configs
+            ],
             "options": {
                 "role": role,
-                "include_developer": bool(include_developer),
-                "strip_boilerplate": bool(strip_boilerplate),
                 "truncate": truncate,
                 "recent_turns": recent_turns,
                 "timestamps": not no_timestamps,

@@ -55,7 +55,8 @@ These are the lossless outputs used for backups and audits.
 - `conversation` writes a cleaned dialogue view and omits tool activity and developer instructions by default.
 - `prompts` exports only relevant user-authored prompt text.
 - `instructions` exports explicit developer instruction records.
-- `memory` writes structured JSONL events for retrieval or indexing workflows.
+- `memory` writes a raw, source-faithful event stream for retrieval/debugging; it retains message, tool, context, and output records including developer events unless a caller explicitly filters them out.
+- `rag` writes a normalized per-message JSONL stream meant for embeddings and LangChain-style ingestion; it is message-oriented and excludes developer content by default unless `--include-developer` is passed for a product that allows it.
 
 ## Filtering and cleanup policies
 
@@ -63,13 +64,14 @@ The exporter intentionally distinguishes between:
 
 - source fidelity
 - user-facing readability
-- retrieval-oriented structured output
+- raw retrieval events
+- normalized ingestion documents
 
 Some cleanup is default in derived output:
 
 - generated environment context is removed from conversational exports
 - boilerplate is stripped only when explicitly requested for some products
-- developer instructions are excluded from default conversation output unless requested
+- developer instructions are excluded from default conversation and `rag` output unless requested
 
 This keeps raw session data available in source-faithful products while producing cleaner artifacts for human review and indexing.
 

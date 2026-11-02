@@ -147,15 +147,7 @@ def format_jsonl_memory(
     events: List[dict],
     session_name: str,
 ) -> str:
-    """Format messages and tool activity as structured JSONL for RAG.
-    
-    Args:
-        events: Chronological message and activity event dicts
-        session_name: Name of the session
-    
-    Returns:
-        JSONL-formatted string
-    """
+    """Format messages and tool activity as structured JSONL for raw retrieval/debugging."""
     lines = []
     fields = (
         "kind",
@@ -184,4 +176,36 @@ def format_jsonl_memory(
             if value not in (None, "", [], {}):
                 entry[field] = value
         lines.append(json.dumps(entry, ensure_ascii=False))
+    return "\n".join(lines)
+
+
+def format_jsonl_rag(
+    messages: List[dict],
+    session_name: str,
+) -> str:
+    """Format a normalized per-message JSONL stream for embeddings and retrieval indexes.
+
+    This product is intentionally message-oriented: it keeps user, assistant, and
+    optional developer snippets in a single schema suitable for downstream
+    LangChain/vector-store ingestion. The raw event stream remains in `memory`.
+    """
+    lines = []
+    for message in messages:
+        role = message.get("role")
+        if role not in ("user", "assistant", "developer"):
+            continue
+        text = message.get("text")
+        if text is None:
+            continue
+        payload = {
+            "schema_version": 1,
+            "session": session_name,
+            "type": "message",
+            "role": role,
+            "timestamp": message.get("timestamp"),
+            "turn_id": message.get("turn_id"),
+            "ordinal": message.get("ordinal"),
+            "text": text,
+        }
+        lines.append(json.dumps(payload, ensure_ascii=False))
     return "\n".join(lines)

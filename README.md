@@ -17,7 +17,8 @@ Export local Codex sessions with control over fidelity and format. A single CLI 
 | `markdown` | A chronological human-readable log |
 | `conversation` | Clean dialogue only |
 | `prompts` | Just the human prompts |
-| `rag` | Structured JSONL for retrieval |
+| `memory` | Raw retrieval/debugging JSONL |
+| `rag` | Normalized message JSONL for embeddings |
 | `instructions` | Only developer instructions 
 
 ## Quick start
@@ -27,6 +28,7 @@ python3 cli.py --preset markdown
 python3 cli.py --preset source
 python3 cli.py --preset archive
 
+python3 cli.py --preset memory
 python3 cli.py --preset rag
 python3 cli.py --preset rag --strip-boilerplate
 
@@ -61,7 +63,8 @@ Products are output formats; presets combine products and filters.
 | `markdown` | Human-readable transcript | Derived view |
 | `conversation` | Clean dialogue | Derived, excludes tool activity and developer text by default |
 | `prompts` | User prompts only | Derived |
-| `rag` | Structured JSONL for retrieval | Derived, includes developer records by default |
+| `memory` | Raw structured retrieval events | Derived, includes developer records by default |
+| `rag` | Normalized message documents | Derived, excludes developer text by default |
 | `instructions` | Developer instructions only | Derived |
 
 For the full behavior matrix, cleanup rules, and architecture notes, see [architecture.md](architecture.md).

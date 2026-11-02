@@ -16,7 +16,8 @@ from extract import read_session_metadata
 PRODUCT_TITLES = {
     "transcript": "Transcript with Tool Activity",
     "conversation": "Conversation Only",
-    "memory": "RAG Events",
+    "memory": "Raw Retrieval Events",
+    "rag": "Normalized RAG Documents",
     "instructions": "Developer Instructions",
     "faithful": "Source JSONL",
 }
@@ -25,6 +26,7 @@ PRODUCT_EXTENSIONS = {
     "transcript": ".md",
     "conversation": ".md",
     "memory": ".jsonl",
+    "rag": ".jsonl",
     "instructions": ".md",
     "faithful": ".jsonl",
 }
@@ -626,6 +628,33 @@ def write_root_index(
     counts = metadata.get("counts", {})
     usage_summary = metadata.get("usage_summary") or {}
     run_id = metadata.get("run_id", run_dir.name)
+    resolved_products = metadata.get("resolved_products") or []
+    developer_states = {
+        item.get("name"): item.get("developer") for item in resolved_products if item.get("name")
+    }
+    developer_label = ", ".join(
+        f"{name}={state or 'default'}" for name, state in developer_states.items()
+    ) if developer_states else "none"
+    boilerplate_states = {
+        item.get("name"): bool(item.get("strip_boilerplate"))
+        for item in resolved_products
+        if item.get("name")
+    }
+    boilerplate_label = ", ".join(
+        f"{name}={('on' if active else 'off')}" for name, active in boilerplate_states.items()
+    ) if boilerplate_states else "none"
+    role_values = [
+        item.get("role")
+        for item in resolved_products
+        if item.get("role")
+    ]
+    role_label = (
+        ", ".join(sorted(set(role_values)))
+        if role_values
+        else "all"
+    )
+    recent_turns = metadata.get("options", {}).get("recent_turns")
+    truncate_value = metadata.get("options", {}).get("truncate")
 
     lines = [
         f"# Codex Export Run: `{run_id}`",
@@ -637,11 +666,11 @@ def write_root_index(
         f"- Products: {', '.join(product_names)}",
         (
             "- Filters: "
-            f"role={metadata.get('options', {}).get('role') or 'all'}; "
-            f"developer={'on' if metadata.get('options', {}).get('include_developer') else 'off'}; "
-            f"recent_turns={metadata.get('options', {}).get('recent_turns') if metadata.get('options', {}).get('recent_turns') is not None else 'all'}; "
-            f"truncate={metadata.get('options', {}).get('truncate') if metadata.get('options', {}).get('truncate') is not None else 'off'}; "
-            f"boilerplate={'on' if metadata.get('options', {}).get('strip_boilerplate') else 'off'}"
+            f"role={role_label}; "
+            f"developer={developer_label}; "
+            f"recent_turns={recent_turns if recent_turns is not None else 'all'}; "
+            f"truncate={truncate_value if truncate_value is not None else 'off'}; "
+            f"boilerplate={boilerplate_label}"
         ),
         (
             "- Sessions: "

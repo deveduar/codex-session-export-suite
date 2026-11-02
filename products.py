@@ -19,7 +19,7 @@ class ProductConfig:
         role_filter: Optional[List[str]] = None,
         truncate_chars: Optional[int] = None,
         role: Optional[str] = None,
-        developer: str = "include",
+        developer: Optional[str] = None,
         message_only: bool = False,
         clean_user_prompts: bool = False,
         strip_boilerplate: bool = False,
@@ -60,11 +60,11 @@ class ProductConfig:
         if self.role and role != self.role:
             return False
 
-        if role == "developer":
-            return self.developer != "exclude"
+        if self.developer == "exclude":
+            return role != "developer"
 
         if self.developer == "only":
-            return False
+            return role == "developer"
 
         return True
 
@@ -149,7 +149,7 @@ transcript = ProductConfig(
     name="transcript",
     description="Chronological Markdown transcript with tool calls, results, context, and developer instructions",
     role_filter=None,
-    developer="include",
+    developer=None,
 )
 
 conversation = ProductConfig(
@@ -164,10 +164,20 @@ conversation = ProductConfig(
 
 memory = ProductConfig(
     name="memory",
-    description="One structured JSON line per message, tool call, context block, and tool result for RAG",
+    description="Raw structured JSON lines for retrieval/debugging: message, tool, context, and output events in source order",
     role_filter=None,
     developer="include",
     strip_boilerplate=False,
+)
+
+rag = ProductConfig(
+    name="rag",
+    description="Normalized JSONL documents for embedding/indexing pipelines; user/assistant text only, developer content excluded by default",
+    role_filter=None,
+    developer="exclude",
+    message_only=True,
+    clean_user_prompts=True,
+    strip_boilerplate=True,
 )
 
 instructions = ProductConfig(
@@ -187,6 +197,7 @@ PRODUCTS: Dict[str, ProductConfig] = {
     "transcript": transcript,
     "conversation": conversation,
     "memory": memory,
+    "rag": rag,
     "instructions": instructions,
     "faithful": faithful,
 }
@@ -221,9 +232,13 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "product": "conversation",
         "role": "user",
     },
-    "rag": {
-        "description": "Lossy: structured messages and tool events for retrieval",
+    "memory": {
+        "description": "Lossy: raw structured message, tool, and context events for retrieval/debugging",
         "product": "memory",
+    },
+    "rag": {
+        "description": "Lossy: normalized message documents for LangChain, embeddings, and vector stores",
+        "product": "rag",
     },
     "instructions": {
         "description": "Lossy: explicit developer instructions only",
@@ -291,7 +306,12 @@ def _apply_product_options(product: ProductConfig, options: Dict[str, Any]) -> P
 
 
 def resolve_preset(name: str) -> List[ProductConfig]:
-    """Expand a preset into one or more concrete product configurations."""
+    """Expand a preset into one or more concrete product configurations.
+
+    The product object still represents a concrete format, while the preset keeps
+    the filtering policy in the effective run configuration. This keeps product
+    defaults neutral and avoids lying about a single global developer policy.
+    """
     preset = get_preset(name)
 
     if "products" in preset and "product" in preset:
@@ -322,5 +342,6 @@ def resolve_preset(name: str) -> List[ProductConfig]:
 transcript_product = transcript
 conversation_product = conversation
 memory_product = memory
+rag_product = rag
 instructions_product = instructions
 faithful_product = faithful
