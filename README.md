@@ -23,22 +23,23 @@ Export local Codex sessions with control over fidelity and format. A single CLI 
 
 ## Quick start
 
+Run the portable entry point from the repository root with your active Python interpreter:
+
 ```bash
-python3 cli.py --preset markdown
-python3 cli.py --preset source
-python3 cli.py --preset archive
+python codexexport.py --preset markdown
+python codexexport.py --preset source
+python codexexport.py --preset archive
 
-python3 cli.py --preset memory
-python3 cli.py --preset rag
-python3 cli.py --preset rag --strip-boilerplate
+python codexexport.py --preset memory
+python codexexport.py --preset rag
+python codexexport.py --preset rag --strip-boilerplate
 
-python3 cli.py --preset prompts
-python3 cli.py --preset conversation
-python3 cli.py --preset conversation --include-developer
-
+python codexexport.py --preset prompts
+python codexexport.py --preset conversation
+python codexexport.py --preset conversation --include-developer
 ```
 
-On Windows, use `py cli.py --preset archive`.
+Replace `python` with the interpreter command used by your environment (for example, `python3` or `py`).
 
 ## Input and output paths
 
@@ -47,20 +48,20 @@ The Codex input path is optional. If you omit it, the tool auto-detects the loca
 If you want to point to a specific source explicitly, you can pass the Codex directory, its `sessions` directory, a subdirectory, or a single `.jsonl` file:
 
 ```bash
-python3 cli.py /path/to/.codex --preset archive
+python codexexport.py /path/to/.codex --preset archive
 ```
 
 The export destination is controlled with `-o` / `--output` and defaults to the configured output directory or `./codex_exports`:
 
 ```bash
-python3 cli.py --preset archive --output ./exports
-python3 cli.py --preset conversation --output "C:\\tmp\\codex-export"
+python codexexport.py --preset archive --output ./exports
+python codexexport.py --preset conversation --output "C:\\tmp\\codex-export"
 ```
 
 Preview the planned paths without writing files:
 
 ```bash
-python3 cli.py --preset archive --dry-run
+python codexexport.py --preset archive --dry-run
 ```
  
 ## Products and presets
@@ -82,15 +83,15 @@ For the full behavior matrix, cleanup rules, and architecture notes, see [archit
 
 ## Configuration file
 
-The INI file is optional. It is only used when you explicitly tell the CLI which file to load via `--config`.
+The CLI auto-detects `./codex_export.ini` (or a per-user config) when present. Use `--config` to select a specific file explicitly.
 
 Example:
 
 ```bash
-python3 cli.py --config ./codex_export.ini --preset archive
+python codexexport.py --config ./codex_export.ini --preset archive
 ```
 
-The exporter will also auto-detect a local `./codex_export.ini` if present, but a custom `--config` path is the clearest way to force a specific configuration for one run. CLI flags still override the config values for the current execution.
+CLI flags override config values for the current execution.
 
 For the full precedence rules, preset-vs-runtime behavior, and metadata semantics, see [architecture.md](architecture.md).
 
@@ -99,32 +100,16 @@ For the full precedence rules, preset-vs-runtime behavior, and metadata semantic
 Compare the current Codex session set with the newest export run:
 
 ```bash
-python3 cli.py --check-updates
+python codexexport.py --check-updates
 ```
 
 This inspects the latest export metadata under `codex_exports/` and reports which sessions are new, modified, unchanged, or missing from the current scan. It is useful when you want to confirm whether a fresh Codex export has already been captured or whether anything changed since the last run.
 
-## CLI Usage
+## CLI help
 
-```
-Usage: cli.py [OPTIONS] [PATH]
-
-  Export readable and machine-friendly views of local Codex sessions.
-
-Options:
-  --preset TEXT              Preset to use for exporting
-  --products TEXT            Comma-separated list of products to include
-  --role TEXT                Filter by role (e.g., user, assistant, developer)
-  --include-developer         Include developer instructions in products that exclude them by default
-  --strip-boilerplate        Remove recognized boilerplate from derived prompts/conversation output
-  --truncate N                Keep the first N characters of each message or tool body; 0 disables truncation
-  --recent-turns             Include only the most recent turns in the export
-  --timestamps               Include timestamps in the export
-  --include-archived         Include archived sessions in the export
-  --check-updates            Compare current Codex sessions with the latest export run
-  --dry-run                  Preview the planned paths without writing files
-  --list-presets             List available products and presets
-  --help                     Show this message and exit.
+```bash
+python codexexport.py --help
+python codexexport.py --list-presets
 ```
 
 ## Disclaimer

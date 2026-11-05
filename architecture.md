@@ -129,7 +129,7 @@ The Codex session input path itself is optional; when omitted, the exporter auto
 Example:
 
 ```bash
-python3 cli.py --config ./codex_export.ini --preset archive
+python codexexport.py --config ./codex_export.ini --preset archive
 ```
 
 The INI file is a default source for values such as:
@@ -185,7 +185,7 @@ The CLI supports several valid ways to choose the export behavior, but they are 
 Example:
 
 ```bash
-python3 cli.py --preset conversation --output ./exports
+python codexexport.py --preset conversation --output ./exports
 ```
 
 This uses the preset as the base recipe. The selected product set and default policy come from that preset.
@@ -195,7 +195,7 @@ This uses the preset as the base recipe. The selected product set and default po
 Example:
 
 ```bash
-python3 cli.py --products transcript memory --output ./exports
+python codexexport.py --products transcript memory --output ./exports
 ```
 
 This bypasses preset resolution and applies the product list directly.
@@ -205,8 +205,8 @@ This bypasses preset resolution and applies the product list directly.
 Examples:
 
 ```bash
-python3 cli.py --preset conversation --include-developer --output ./exports
-python3 cli.py --preset rag --strip-boilerplate --output ./exports
+python codexexport.py --preset conversation --include-developer --output ./exports
+python codexexport.py --preset rag --strip-boilerplate --output ./exports
 ```
 
 These are valid runs. The preset provides the base recipe, and the CLI flags override the effective policy for that export run only.
@@ -216,7 +216,7 @@ These are valid runs. The preset provides the base recipe, and the CLI flags ove
 Example:
 
 ```bash
-python3 cli.py --products transcript --role user --truncate 2000 --output ./exports
+python codexexport.py --products transcript --role user --truncate 2000 --output ./exports
 ```
 
 This bypasses preset resolution entirely and applies the override directly to the base product configuration.

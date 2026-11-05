@@ -14,9 +14,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from config import ConfigError, detect_codex_dir, expand_path, load_config
-from extract import extract_session_events_from_jsonl, retain_recent_turns
-from organize import (
+from .config import ConfigError, detect_codex_dir, expand_path, load_config
+from .extract import extract_session_events_from_jsonl, retain_recent_turns
+from .organize import (
     build_session_record,
     create_run_dir,
     compare_session_records,
@@ -30,13 +30,13 @@ from organize import (
     write_indexes,
     write_metadata,
 )
-from output import (
+from .output import (
     format_jsonl_memory,
     format_jsonl_rag,
     format_markdown_transcript,
     format_markdown_activity_transcript,
 )
-from products import (
+from .products import (
     ProductSpec,
     ResolvedProduct,
     get_preset,
@@ -72,7 +72,7 @@ def _configure_stdout() -> None:
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="codex_export",
+        prog="codexexport.py",
         description="Export local Codex session JSONL as transcripts and data products.",
         epilog="Presets: " + ", ".join(list_presets()),
     )

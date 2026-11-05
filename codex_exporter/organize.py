@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
-from extract import read_session_metadata
+from .extract import read_session_metadata
 
 
 PRODUCT_TITLES = {

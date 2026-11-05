@@ -1,7 +1,7 @@
 
 .gitignore
 private.md
-x/
+archive/
 # Python
 __pycache__/
 *.py[c]

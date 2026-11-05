@@ -1,6 +1,6 @@
 ---
 name: codex-session-export-suite
-description: Export local Codex sessions, inspect available export presets and products, preview runs, or compare exports. Use when working with this repository's Codex export CLI or codex_export.ini configuration.
+description: Export local Codex sessions, inspect available export presets and products, preview runs, or compare exports. Use when working with this repository's codexexport.py entry point or codex_export.ini configuration.
 ---
 
 # Codex Session Exporter
@@ -9,12 +9,12 @@ Use this workflow to list options, preview, or export local Codex sessions.
 
 ## Procedure
 
-1. Use the Python interpreter active for this workspace. Do not assume an executable name such as `python`, `python3`, or `py`; resolve it from the environment or project setup. If the correct interpreter is ambiguous, ask before running the CLI.
+1. Run the root-level `codexexport.py` with the Python interpreter active for this workspace. Do not guess the interpreter name; resolve it from the environment or project setup, and ask if it is ambiguous.
 2. Read the CLI's current options or available export recipes when needed:
 
    ```text
-   <python> cli.py --help
-   <python> cli.py --list-presets
+   <python> codexexport.py --help
+   <python> codexexport.py --list-presets
    ```
 
    Treat these outputs as the source of truth for supported flags, products, presets, descriptions, and preset recipes. Do not duplicate or guess them.
