@@ -37,7 +37,6 @@ from .output import (
     format_markdown_activity_transcript,
 )
 from .products import (
-    ProductSpec,
     ResolvedProduct,
     get_preset,
     get_product,

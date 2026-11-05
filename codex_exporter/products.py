@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from .extract import extract_user_prompt
+
 
 class ProductSpec:
     """Concrete output format without runtime policy leakage."""
@@ -92,16 +94,12 @@ class ResolvedProduct(ProductSpec):
                 and filtered.get("kind") == "message"
                 and filtered.get("role") == "user"
             ):
-                from .extract import extract_user_prompt
-
                 text = extract_user_prompt(filtered.get("text", ""))
                 if not text:
                     continue
                 filtered["text"] = text
 
             if self.strip_boilerplate and filtered.get("kind") == "message":
-                from .extract import extract_user_prompt
-
                 if filtered.get("role") == "user":
                     text = extract_user_prompt(filtered.get("text", ""))
                     if not text:
@@ -120,15 +118,11 @@ class ResolvedProduct(ProductSpec):
 
             text = msg.get("text", "")
             if self.clean_user_prompts and role == "user":
-                from .extract import extract_user_prompt
-
                 text = extract_user_prompt(text)
                 if not text:
                     continue
 
             if self.strip_boilerplate and role == "user":
-                from .extract import extract_user_prompt
-
                 text = extract_user_prompt(text)
                 if not text:
                     continue
