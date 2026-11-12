@@ -7,7 +7,7 @@ import hashlib
 import os
 import re
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .extract import read_session_metadata
@@ -429,10 +429,20 @@ def create_run_dir(output_dir: Path, label: str, now: datetime) -> Path:
             continue
 
 
-def product_filename(product_name: str, slug: str) -> str:
-    """Return the filename for a product and session slug."""
+def session_folder_name(slug: str) -> str:
+    """Return the per-session bundle folder name for a session slug."""
+    return slug
+
+
+def product_filename(slug: str, product_name: str) -> str:
+    """Return the sibling product filename inside a session folder.
+
+    The product name is part of the filename (``<slug>.<product><ext>``) so all
+    products of one session live together as siblings instead of in one folder
+    per product.
+    """
     extension = PRODUCT_EXTENSIONS.get(product_name, ".md")
-    return f"{slug}{extension}"
+    return f"{slug}.{product_name}{extension}"
 
 
 def write_metadata(run_dir: Path, metadata: Dict[str, Any]) -> Path:
@@ -606,14 +616,12 @@ def write_product_index(
         name = _display_name(session)
         project = session.get("project") or ""
         items = _product_item_count(session, product_name)
-        output_parts = PurePosixPath(output).parts
-        relative_output = PurePosixPath(*output_parts[1:]).as_posix()
         lines.append(
             f"| {date} | {_markdown_text(name)} | {_markdown_text(project)} | "
-            f"{items} | {_markdown_link(relative_output, Path(output).name)} |"
+            f"{items} | {_markdown_link(output, Path(output).name)} |"
         )
 
-    path = run_dir / product_name / "index.md"
+    path = run_dir / f"index.{product_name}.md"
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return path
 
@@ -796,7 +804,7 @@ def write_root_index(
             if omitted:
                 details += f"; {omitted} omitted"
             lines.append(
-                f"- {_markdown_link(f'{product_name}/index.md', title)} ({details})"
+                f"- {_markdown_link(f'index.{product_name}.md', title)} ({details})"
             )
 
     project_groups: Dict[str, List[Dict[str, Any]]] = {}

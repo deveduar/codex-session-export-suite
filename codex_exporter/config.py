@@ -18,7 +18,6 @@ CONFIG_FILENAME = "codex_export.ini"
 DEFAULTS: Dict[str, Any] = {
     "codex_dir": None,
     "output_dir": "./codex_exports",
-    "layout": "run",
     "include_archived": False,
     "preset": None,
     "products": None,
@@ -27,6 +26,8 @@ DEFAULTS: Dict[str, Any] = {
     "strip_boilerplate": False,
     "truncate": None,
     "recent_turns": None,
+    "sessions": None,
+    "last": None,
     "timestamps": True,
 }
 
@@ -92,34 +93,45 @@ def find_config(explicit: Optional[str] = None) -> Optional[Path]:
     return None
 
 
-def detect_codex_dir() -> Optional[Path]:
-    """Auto-detect the Codex data directory.
+def detect_codex_dir_with_origin() -> tuple[Optional[Path], str]:
+    """Auto-detect the Codex data directory and report which source won.
 
-    Precedence:
-        1. ``CODEX_HOME`` environment variable.
-        2. ``~/.codex`` (``%USERPROFILE%\\.codex`` on Windows).
-        3. ``$XDG_CONFIG_HOME/codex`` on non-Windows systems.
+    Auto-detection precedence:
+        1. ``CODEX_HOME`` environment variable (``origin="env"``).
+        2. ``~/.codex`` (``%USERPROFILE%\\.codex`` on Windows, ``origin="home"``).
+        3. ``$XDG_CONFIG_HOME/codex`` on non-Windows systems (``origin="xdg"``).
+
+    When nothing exists yet the first candidate is returned so the caller can
+    report the intended path; ``origin`` is then ``"none"``.
     """
-    candidates: List[Path] = []
+    candidates: List[tuple[Path, str]] = []
 
     codex_home = os.environ.get("CODEX_HOME")
     if codex_home:
         expanded = expand_path(codex_home)
         if expanded:
-            candidates.append(expanded)
+            candidates.append((expanded, "env"))
 
-    candidates.append(Path.home() / ".codex")
+    candidates.append((Path.home() / ".codex", "home"))
 
     if os.name != "nt":
         xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
         if xdg_config_home:
-            candidates.append(Path(xdg_config_home) / "codex")
+            candidates.append((Path(xdg_config_home) / "codex", "xdg"))
 
-    for candidate in candidates:
+    for candidate, origin in candidates:
         if candidate.is_dir():
-            return candidate
+            return candidate, origin
 
-    return candidates[0] if candidates else None
+    if candidates:
+        return candidates[0][0], "none"
+    return None, "none"
+
+
+def detect_codex_dir() -> Optional[Path]:
+    """Return the auto-detected Codex data directory, if any."""
+    path, _ = detect_codex_dir_with_origin()
+    return path
 
 
 def _get(parser: configparser.ConfigParser, section: str, *keys: str) -> Optional[str]:
@@ -155,11 +167,10 @@ def _parse_int(value: str) -> int:
     return number
 
 
-def _parse_layout(value: str) -> str:
-    normalized = value.strip().lower()
-    if normalized in ("run", "flat"):
-        return normalized
-    raise ConfigError(f"Invalid layout value: {value!r}. Use run or flat.")
+def _parse_sessions(value: str) -> Optional[List[str]]:
+    """Parse a comma/space separated session id list."""
+    sessions = value.replace(",", " ").split()
+    return sessions or None
 
 
 def _parse_products(value: str) -> Optional[List[str]]:
@@ -195,10 +206,6 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     if output_dir:
         config["output_dir"] = output_dir
 
-    layout = _get(parser, "output", "layout")
-    if layout:
-        config["layout"] = _parse_layout(layout)
-
     preset = _get(parser, "export", "preset", "default_preset")
     if preset:
         config["preset"] = preset
@@ -227,6 +234,14 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
     if recent_turns is not None:
         config["recent_turns"] = _parse_int(recent_turns)
 
+    sessions = _get(parser, "export", "sessions")
+    if sessions:
+        config["sessions"] = _parse_sessions(sessions)
+
+    last = _get(parser, "export", "last")
+    if last is not None:
+        config["last"] = _parse_int(last)
+
     timestamps = _get(parser, "export", "timestamps")
     if timestamps is not None:
         config["timestamps"] = _parse_bool(timestamps)
@@ -244,10 +259,6 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_output_dir = _get(parser, section, "output_dir")
         if flat_output_dir:
             config["output_dir"] = flat_output_dir
-
-        flat_layout = _get(parser, section, "layout")
-        if flat_layout:
-            config["layout"] = _parse_layout(flat_layout)
 
         flat_preset = _get(parser, section, "preset")
         if flat_preset:
@@ -276,6 +287,14 @@ def load_config(explicit: Optional[str] = None) -> Dict[str, Any]:
         flat_recent_turns = _get(parser, section, "recent_turns")
         if flat_recent_turns is not None:
             config["recent_turns"] = _parse_int(flat_recent_turns)
+
+        flat_sessions = _get(parser, section, "sessions")
+        if flat_sessions:
+            config["sessions"] = _parse_sessions(flat_sessions)
+
+        flat_last = _get(parser, section, "last")
+        if flat_last is not None:
+            config["last"] = _parse_int(flat_last)
 
         flat_timestamps = _get(parser, section, "timestamps")
         if flat_timestamps is not None:

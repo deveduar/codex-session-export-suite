@@ -94,22 +94,37 @@ These are different uses, not different “types of product truth”.
 
 ## Runs and metadata
 
-Each export creates a run under `codex_exports/` containing:
+Each export creates one timestamped run folder directly under `codex_exports/`. The run folder contains:
 
-- `metadata.json` — machine-readable run summary
-- `index.md` — human-readable summary
-- generated product files and folders
+- `metadata.json` — machine-readable run summary (schema version 7)
+- `index.md` — root index grouped by project
+- `index.<product>.md` — one per-product index per exported product
+- one folder per session, named after the session slug
 
-The metadata records the effective run configuration, including the selected preset and the resolved filters, so the real behavior is always traceable.
+Inside each session folder, every product file is a sibling sharing the slug prefix:
+
+```
+<run>/<session_slug>/
+  <session_slug>.transcript.md
+  <session_slug>.memory.jsonl
+  <session_slug>.rag.jsonl
+  <session_slug>.faithful.jsonl
+```
+
+The session slug keeps the `{date}_{slugified-label}_{short_id}` form. Project information is metadata-only and used for grouping in the root index.
+
+The metadata records the effective run configuration, including the resolved source and its origin, the selected preset, and the resolved filters, so the real behavior is always traceable.
 
 ## Layout policy
 
-The exporter supports two on-disk layouts:
+The exporter has a single on-disk layout: one timestamped run folder per invocation, with one sibling-file folder per session. The former `--flat` layout and its `layout` INI key have been removed. The run folder is always created directly under `--output`, which keeps launcher-style directory detection working.
 
-- `run` — default, timestamped run folder
-- `flat` — direct-write output directory
+## Machine-readable output and exit codes
 
-This is an internal storage choice and is not treated as part of the exported content semantics.
+- `--json` emits a single JSON object on stdout (and implies `--quiet`). The shape varies by mode: dry-run/export preflight, `--check-updates` comparison, and normal export result.
+- `-q` / `--quiet` suppresses per-file and informational lines while keeping errors and one final summary.
+- Exit codes: `0` success, `1` configuration or source error, `2` no data (source valid but no sessions matched).
+- Human-readable errors go to stderr; data and progress go to stdout.
 
 ## Change detection
 
@@ -124,7 +139,7 @@ Configuration values are defaults, not final truth. The exporter resolves settin
 3. per-user config in the OS config directory
 4. built-in defaults
 
-The Codex session input path itself is optional; when omitted, the exporter auto-detects the local Codex install.
+The Codex session input path itself is optional. When resolving it, the exporter uses this precedence: the positional argument, then the INI `codex_dir`, then `CODEX_HOME`, then `~/.codex`, then XDG auto-detection. The winning source and its origin (`argument`, `config`, `env`, `home`, `xdg`, or `none`) are recorded in `metadata.json`.
 
 Example:
 
@@ -136,7 +151,6 @@ The INI file is a default source for values such as:
 
 - `codex_dir`
 - `output_dir`
-- `layout`
 - `preset`
 - `products`
 - `role`
@@ -144,6 +158,8 @@ The INI file is a default source for values such as:
 - `strip_boilerplate`
 - `truncate`
 - `recent_turns`
+- `sessions`
+- `last`
 - `timestamps`
 - `include_archived`
 
@@ -158,9 +174,10 @@ products =
 role =
 include_developer = false
 strip_boilerplate = false
-layout = run
 truncate =
 recent_turns =
+sessions =
+last =
 timestamps = true
 include_archived = false
 ```
@@ -170,9 +187,10 @@ include_archived = false
 - `role`: Optional filter (`user`, `assistant`, `both`).
 - `include_developer`: Include developer instructions in default-clean products for this run.
 - `strip_boilerplate`: Drop recognized generated boilerplate from derived outputs for this run.
-- `layout`: Internal filesystem mode: `run` (default) or `flat`.
 - `truncate`: Max characters kept in message/tool bodies before truncation for this run.
 - `recent_turns`: Keep only the most recent user turns for this run.
+- `sessions`: Export only these sessions (ids, short ids, or source filenames).
+- `last`: Export only the N most recent sessions by session timestamp.
 - `timestamps`: Include timestamps in Markdown output for this run.
 - `include_archived`: Include archived sessions for this run.
 
@@ -226,6 +244,7 @@ This bypasses preset resolution entirely and applies the override directly to th
 - `--preset` and `--products` are mutually exclusive in intent: one selects a recipe, the other selects an explicit product list.
 - `--role`, `--truncate`, `--include-developer`, and `--strip-boilerplate` are product/runtime overrides.
 - `--recent-turns`, `--no-timestamps`, and `--include-archived` are run-level settings and affect the session scan/export as a whole.
+- `--sessions` and `--last` are session-selection settings: they choose whole sessions, whereas `--recent-turns` trims turns within every selected session.
 - A CLI flag always wins over config defaults for that execution.
 - The exported metadata must describe the resolved runtime state, not the unmodified preset defaults.
 

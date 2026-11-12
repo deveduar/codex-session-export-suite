@@ -51,6 +51,8 @@ If you want to point to a specific source explicitly, you can pass the Codex dir
 python codexexport.py /path/to/.codex --preset archive
 ```
 
+The source is resolved in this order: the positional argument, then the `dir` value in `codex_export.ini`, then `CODEX_HOME`, then `~/.codex`, then XDG auto-detection. The chosen source and its origin (`argument`, `config`, `env`, `home`, `xdg`) are reported and recorded in the run metadata.
+
 The export destination is controlled with `-o` / `--output` and defaults to the configured output directory or `./codex_exports`:
 
 ```bash
@@ -63,6 +65,46 @@ Preview the planned paths without writing files:
 ```bash
 python codexexport.py --preset archive --dry-run
 ```
+
+## Output layout
+
+Every run creates one timestamped folder directly under the output directory. Inside it, each session gets its own folder holding all of that session's product files as siblings:
+
+```
+codex_exports/
+  2026-11-12_19-28-43_rag/
+    index.md                     # root index, grouped by project
+    metadata.json                # machine-readable run metadata
+    index.rag.md                 # per-product index
+    2026-10-27_sistema-asus_01a17f02/
+      2026-10-27_sistema-asus_01a17f02.rag.jsonl
+      2026-10-27_sistema-asus_01a17f02.memory.jsonl
+      2026-10-27_sistema-asus_01a17f02.transcript.md
+```
+
+Product extensions: `transcript` → `.md`, `memory` → `.jsonl`, `rag` → `.jsonl`, `faithful` → `.jsonl`. This is a breaking change from the older `<product>/<project>/` tree; the former `--flat` layout has been removed.
+
+## Selecting sessions
+
+Export only specific sessions, or only the most recent ones:
+
+```bash
+python codexexport.py --sessions 01a17f02 01a087aa
+python codexexport.py --last 5
+```
+
+`--sessions` matches the session id, its short form, or the source filename. `--last N` keeps the N most recent sessions by session timestamp. This is distinct from `--recent-turns`, which trims turns *within* each selected session.
+
+## Machine-readable output and exit codes
+
+```bash
+python codexexport.py --preset rag --dry-run --json
+python codexexport.py --check-updates --json
+```
+
+`--json` prints a single JSON object on stdout (and implies `--quiet`). `-q` / `--quiet` suppresses per-file and informational lines but keeps errors and a final summary. Errors go to stderr.
+
+Exit codes: `0` success, `1` configuration or source error, `2` no data (source valid but no sessions matched).
  
 ## Products and presets
 
