@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .extract import read_session_metadata
+from .products import RUN_LEVEL_PRODUCTS
 
 
 PRODUCT_TITLES = {
     "transcript": "Transcript with Tool Activity",
     "conversation": "Conversation Only",
     "memory": "Raw Retrieval Events",
-    "rag": "Normalized RAG Documents",
+    "corpus": "Normalized Message Corpus",
     "instructions": "Developer Instructions",
     "faithful": "Source JSONL",
 }
@@ -26,7 +27,7 @@ PRODUCT_EXTENSIONS = {
     "transcript": ".md",
     "conversation": ".md",
     "memory": ".jsonl",
-    "rag": ".jsonl",
+    "corpus": ".jsonl",
     "instructions": ".md",
     "faithful": ".jsonl",
 }
@@ -600,6 +601,8 @@ def write_product_index(
         f"- Run: `{run_id}`",
         f"- Sessions: {len(product_sessions)} of {len(sessions)}",
     ]
+    if product_name in RUN_LEVEL_PRODUCTS:
+        lines.append("- Artifact: run-wide JSONL; each listed session contributes records")
     if omitted:
         lines.append(f"- Omitted: {omitted} sessions with no usable content")
     lines.extend(

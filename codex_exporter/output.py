@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def format_markdown_transcript(
@@ -16,6 +16,8 @@ def format_markdown_transcript(
     filename: str = "session",
     include_timestamps: bool = True,
     show_role: bool = True,
+    title: Optional[str] = None,
+    session_metadata: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Format messages as a Markdown transcript.
     
@@ -28,7 +30,7 @@ def format_markdown_transcript(
     Returns:
         Markdown-formatted string
     """
-    lines = []
+    lines = _markdown_frontmatter(filename, title, session_metadata)
     
     # Keep the original chronological order: user/assistant turns interleaved.
     for msg in messages:
@@ -65,13 +67,40 @@ def _code_block(text: str, language: str = "text") -> List[str]:
     return [f"{fence}{language}", text, fence]
 
 
+def _markdown_frontmatter(
+    filename: str,
+    title: Optional[str],
+    session_metadata: Optional[Dict[str, Any]],
+) -> List[str]:
+    metadata = session_metadata or {}
+    resolved_title = str(title or metadata.get("thread_name") or filename or "session")
+    heading = " ".join(resolved_title.splitlines()).strip() or "session"
+    fields = [
+        ("title", resolved_title),
+        ("session_id", metadata.get("id")),
+        ("date", metadata.get("started_at")),
+        ("project", metadata.get("project")),
+        ("source_file", metadata.get("source_file")),
+    ]
+    lines = ["---"]
+    lines.extend(
+        f"{key}: {json.dumps(value, ensure_ascii=False)}"
+        for key, value in fields
+        if value not in (None, "")
+    )
+    lines.extend(["---", "", f"# {heading}", ""])
+    return lines
+
+
 def format_markdown_activity_transcript(
     events: List[dict],
     filename: str = "session",
     include_timestamps: bool = True,
+    title: Optional[str] = None,
+    session_metadata: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Format messages and tool activity as one chronological Markdown transcript."""
-    lines: List[str] = []
+    lines = _markdown_frontmatter(filename, title, session_metadata)
 
     for event in events:
         kind = event.get("kind")
@@ -140,6 +169,8 @@ def format_markdown_activity_transcript(
 def format_jsonl_memory(
     events: List[dict],
     session_name: str,
+    session_id: Optional[str] = None,
+    session_title: Optional[str] = None,
 ) -> str:
     """Format messages and tool activity as structured JSONL for raw retrieval/debugging."""
     lines = []
@@ -165,6 +196,10 @@ def format_jsonl_memory(
             "session": session_name,
             "type": event.get("kind", ""),
         }
+        if session_id:
+            entry["session_id"] = session_id
+        if session_title:
+            entry["session_title"] = session_title
         for field in fields[1:]:
             value = event.get(field)
             if value not in (None, "", [], {}):
@@ -173,15 +208,17 @@ def format_jsonl_memory(
     return "\n".join(lines)
 
 
-def format_jsonl_rag(
+def format_jsonl_corpus(
     messages: List[dict],
     session_name: str,
+    session_id: Optional[str] = None,
+    session_title: Optional[str] = None,
 ) -> str:
-    """Format a normalized per-message JSONL stream for embeddings and retrieval indexes.
+    """Format normalized message records for the run-wide JSONL corpus.
 
     This product is intentionally message-oriented: it keeps user, assistant, and
     optional developer snippets in a single schema suitable for downstream
-    LangChain/vector-store ingestion. The raw event stream remains in `memory`.
+    indexing and retrieval. The raw event stream remains in `memory`.
     """
     lines = []
     for message in messages:
@@ -201,5 +238,9 @@ def format_jsonl_rag(
             "ordinal": message.get("ordinal"),
             "text": text,
         }
+        if session_id:
+            payload["session_id"] = session_id
+        if session_title:
+            payload["session_title"] = session_title
         lines.append(json.dumps(payload, ensure_ascii=False))
     return "\n".join(lines)

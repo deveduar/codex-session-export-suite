@@ -42,7 +42,7 @@ from .organize import (
 )
 from .output import (
     format_jsonl_memory,
-    format_jsonl_rag,
+    format_jsonl_corpus,
     format_markdown_transcript,
     format_markdown_activity_transcript,
 )
@@ -53,6 +53,7 @@ from .products import (
     list_presets,
     list_products,
     resolve_preset,
+    RUN_LEVEL_PRODUCTS,
 )
 
 
@@ -422,6 +423,8 @@ def process_session(
     no_timestamps: bool = False,
     dry_run: bool = False,
     quiet: bool = False,
+    append_output: bool = False,
+    session_metadata: Optional[Dict[str, object]] = None,
 ) -> None:
     """Format messages for one product and write the output file."""
     product_name = getattr(product_config, "name", "transcript")
@@ -452,22 +455,35 @@ def process_session(
             filtered_events,
             filename=display_name,
             include_timestamps=not no_timestamps,
+            title=str((session_metadata or {}).get("thread_name") or display_name),
+            session_metadata=session_metadata,
         )
         label = "Markdown transcript"
     elif product_name == "memory":
-        content = format_jsonl_memory(filtered_events, display_name)
+        metadata = session_metadata or {}
+        content = format_jsonl_memory(
+            filtered_events,
+            display_name,
+            session_id=str(metadata.get("id") or "") or None,
+            session_title=str(metadata.get("thread_name") or display_name),
+        )
         label = "Structured retrieval JSONL"
-    elif product_name == "rag":
-        content = format_jsonl_rag(
+    elif product_name == "corpus":
+        metadata = session_metadata or {}
+        content = format_jsonl_corpus(
             [event for event in filtered_events if event.get("kind") == "message"],
             display_name,
+            session_id=str(metadata.get("id") or "") or None,
+            session_title=str(metadata.get("thread_name") or display_name),
         )
-        label = "Normalized RAG JSONL"
+        label = "Normalized message corpus JSONL"
     else:
         content = format_markdown_transcript(
             filtered_events,
             filename=display_name,
             include_timestamps=not no_timestamps,
+            title=str((session_metadata or {}).get("thread_name") or display_name),
+            session_metadata=session_metadata,
         )
         label = (
             "Developer instructions"
@@ -475,8 +491,11 @@ def process_session(
             else "Markdown conversation"
         )
 
-    with open(output_file, "w", encoding="utf-8") as handle:
+    mode = "a" if append_output else "w"
+    with open(output_file, mode, encoding="utf-8") as handle:
         handle.write(content)
+        if append_output and content:
+            handle.write("\n")
 
     if not quiet:
         print(f"[+] {label} exported: {output_file.name}")
@@ -914,7 +933,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     codex_root = find_codex_root(codex_path)
     session_index = load_session_index(codex_root)
     session_records = []
-    files_written = 0
+    written_output_paths = set()
 
     for index, file_path in enumerate(jsonl_files, 1):
         if not quiet:
@@ -953,6 +972,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         display_name = str(record["slug"])
         session_dir = run_dir / session_folder_name(display_name)
+        session_title = str(record.get("thread_name") or record.get("project") or display_name)
         for product_config in product_configs:
             product_name = product_config.name
             product_events = product_config.select_events(events)
@@ -968,7 +988,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 1 if product_name == "faithful" else len(product_events)
             )
 
-            output_file = session_dir / product_filename(display_name, product_name)
+            if product_name in RUN_LEVEL_PRODUCTS:
+                output_file = run_dir / f"{product_name}.jsonl"
+            else:
+                output_file = session_dir / product_filename(display_name, product_name)
 
             process_session(
                 file_path,
@@ -978,7 +1001,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 display_name,
                 no_timestamps=no_timestamps,
                 dry_run=args.dry_run,
-                quiet=quiet,
+                quiet=quiet or product_name in RUN_LEVEL_PRODUCTS,
+                append_output=product_name in RUN_LEVEL_PRODUCTS,
+                session_metadata=record,
             )
 
             record["outputs"][product_name] = output_file.relative_to(
@@ -986,13 +1011,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ).as_posix()
 
             if not args.dry_run:
-                files_written += 1
+                written_output_paths.add(output_file.relative_to(run_dir).as_posix())
 
         if not record["outputs"]:
             record["skipped"] = True
             record["reason"] = "no extractable conversation text or source product selected"
         session_records.append(record)
 
+    files_written = len(written_output_paths)
     product_counts = {
         product_name: sum(
             1
@@ -1010,7 +1036,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for product_name in product_names
     }
     metadata = {
-        "schema_version": 7,
+        "schema_version": 8,
         "tool": "codex_session_exporter",
         "version": VERSION,
         "run_id": run_dir.name,
@@ -1025,6 +1051,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "timestamps": not no_timestamps,
         "preset": selected_preset,
         "products": product_names,
+        "product_artifacts": {
+            product_name: f"{product_name}.jsonl"
+            for product_name in product_names
+            if product_name in RUN_LEVEL_PRODUCTS
+            and f"{product_name}.jsonl" in written_output_paths
+        },
         "resolved_products": [
             {
                 "name": product.name,
@@ -1085,6 +1117,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if not quiet:
             print(f"[*] Would write: {run_dir / 'metadata.json'}")
             print(f"[*] Would write: {run_dir / 'index.md'}")
+            for product_name in RUN_LEVEL_PRODUCTS:
+                if product_name in product_names and any(
+                    product_name in record.get("outputs", {})
+                    for record in session_records
+                ):
+                    print(f"[*] Would write: {run_dir / f'{product_name}.jsonl'}")
             for product_name in product_names:
                 if any(
                     product_name in record.get("outputs", {})

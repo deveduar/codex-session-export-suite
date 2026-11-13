@@ -14,12 +14,12 @@ The exporter uses three distinct layers:
 
 1. ProductSpec
    - A real output format.
-   - Examples: `transcript`, `memory`, `rag`, `faithful`.
+   - Examples: `transcript`, `memory`, `corpus`, `faithful`.
    - It defines what the format is, not how a given export is filtered.
 
 2. Preset
    - A named export recipe that combines one or more base products with a concrete policy.
-   - Examples: `archive`, `source`, `markdown`, `conversation`, `prompts`, `instructions`.
+   - Examples: `complete`, `source`, `markdown`, `conversation`, `prompts`, `instructions`.
    - A preset is not a product; it is a use-case bundle.
 
 3. ResolvedProduct
@@ -34,7 +34,7 @@ These are the real base output formats:
 
 - `transcript` — chronological Markdown transcript with tool activity and context
 - `memory` — raw structured JSONL for retrieval/debugging pipelines
-- `rag` — normalized message JSONL for embeddings/vector stores
+- `corpus` — normalized message JSONL for indexing and retrieval
 - `faithful` — byte-for-byte copy of the original session JSONL
 
 A product is not “clean” or “raw” by default. Its behavior is defined by the runtime policy that is applied when it is exported.
@@ -43,13 +43,13 @@ A product is not “clean” or “raw” by default. Its behavior is defined by
 
 Presets are the user-facing export modes. They are recipes, not product identities.
 
-- `archive` — source JSONL + transcript
+- `complete` — source JSONL + transcript + run-wide memory and corpus JSONL
 - `source` — source-only lossless copy
 - `markdown` — transcript view
 - `conversation` — clean dialogue-only transcript; excludes developer text and tool activity by default
 - `prompts` — user prompts only
 - `memory` — raw retrieval/debugging events, includes developer records by default
-- `rag` — normalized message documents for embeddings; excludes developer text by default
+- `corpus` — normalized message documents; excludes developer text by default
 - `instructions` — developer instructions only
 
 The important rule is simple:
@@ -96,24 +96,25 @@ These are different uses, not different “types of product truth”.
 
 Each export creates one timestamped run folder directly under the configured output directory (default `./exports/`). The run folder contains:
 
-- `metadata.json` — machine-readable run summary (schema version 7)
+- `metadata.json` — machine-readable run summary (schema version 8)
 - `index.md` — root index grouped by project
 - `index.<product>.md` — one per-product index per exported product
 - one folder per session, named after the session slug
 
-Inside each session folder, every product file is a sibling sharing the slug prefix:
+Session-scoped files are siblings sharing the session slug. The raw memory and normalized corpus are run-wide files at the run root:
 
 ```
 <run>/<session_slug>/
   <session_slug>.transcript.md
-  <session_slug>.memory.jsonl
-  <session_slug>.rag.jsonl
   <session_slug>.faithful.jsonl
+<run>/memory.jsonl
+<run>/corpus.jsonl
 ```
 
 The session slug keeps the `{date}_{slugified-label}_{short_id}` form. Project information is metadata-only and used for grouping in the root index.
 
 The metadata records the effective run configuration, including the resolved source and its origin, the selected preset, and the resolved filters, so the real behavior is always traceable.
+Each JSONL record carries `session`, `session_id`, and `session_title`; `metadata.json` lists run-level files in `product_artifacts` and records which sessions contributed each product. `complete` resolves distinct policies per product, so the faithful source is untouched, `memory` retains developer events, and `corpus` excludes developer content and cleans user prompts by default.
 
 `--list-sessions` uses the same discovery and selection rules but only reads
 session metadata; it creates no run directory or export files. `--recent-turns`
@@ -156,7 +157,7 @@ The Codex session input path itself is optional. When resolving it, the exporter
 Example:
 
 ```bash
-python codexexport.py --config ./codex_export.ini --preset archive
+python codexexport.py --config ./codex_export.ini --preset complete
 ```
 
 The INI file is a default source for values such as:
@@ -181,7 +182,7 @@ The following options are available in the config file under the `[export]` sect
 
 ```ini
 [export]
-preset = archive
+preset = complete
 products =
 role =
 include_developer = false
@@ -236,7 +237,7 @@ Examples:
 
 ```bash
 python codexexport.py --preset conversation --include-developer --output ./exports
-python codexexport.py --preset rag --strip-boilerplate --output ./exports
+python codexexport.py --preset corpus --strip-boilerplate --output ./exports
 ```
 
 These are valid runs. The preset provides the base recipe, and the CLI flags override the effective policy for that export run only.

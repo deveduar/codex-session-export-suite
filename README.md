@@ -1,6 +1,6 @@
 # Codex Session Export Suite
 
-Export local Codex sessions with control over fidelity and format. A single CLI with presets for every need—from byte-for-byte source archives to clean dialogue transcripts to structured JSONL built for RAG pipelines.
+Export local Codex sessions with control over fidelity and format. A single CLI provides byte-for-byte source copies, titled Markdown transcripts, run-wide event JSONL, and a normalized message corpus.
 
 ## Requirements
 
@@ -13,12 +13,12 @@ Export local Codex sessions with control over fidelity and format. A single CLI 
 | Preset | Use it when you want... |
 |---|---|
 | `source` | A byte-for-byte backup |
-| `archive` | Backup + readable transcript |
+| `complete` | Source copy, full transcript, event memory, and normalized corpus |
 | `markdown` | A chronological human-readable log |
 | `conversation` | Clean dialogue only |
 | `prompts` | Just the human prompts |
-| `memory` | Raw retrieval/debugging JSONL |
-| `rag` | Normalized message JSONL for embeddings |
+| `memory` | One run-wide JSONL of raw session events |
+| `corpus` | One run-wide JSONL of normalized messages |
 | `instructions` | Only developer instructions 
 
 ## Quick start
@@ -30,15 +30,15 @@ Run the portable entry point from the repository root with your active Python in
 # An INI preset/products setting changes this default.
 python codexexport.py
 
-# Export the readable transcript product or the lossless archive preset.
+# Export the readable transcript product or every output with complete.
 python codexexport.py --preset markdown
-python codexexport.py --preset archive
+python codexexport.py --preset complete
 
-# Create a lossless source copy and structured retrieval products.
+# Create a source-only copy or either run-wide JSONL.
 python codexexport.py --preset source
 python codexexport.py --preset memory
-python codexexport.py --preset rag
-python codexexport.py --preset rag --strip-boilerplate
+python codexexport.py --preset corpus
+python codexexport.py --preset corpus --strip-boilerplate
 
 # Export only prompts or clean dialogue; optionally keep developer text.
 python codexexport.py --preset prompts
@@ -55,7 +55,7 @@ The Codex input path is optional. If you omit it, the tool auto-detects the loca
 If you want to point to a specific source explicitly, you can pass the Codex directory, its `sessions` directory, a subdirectory, or a single `.jsonl` file:
 
 ```bash
-python codexexport.py /path/to/.codex --preset archive
+python codexexport.py /path/to/.codex --preset complete
 ```
 
 The source is resolved in this order: the positional argument, then the `dir` value in `codex_export.ini`, then `CODEX_HOME`, then `~/.codex`, then XDG auto-detection. The chosen source and its origin (`argument`, `config`, `env`, `home`, `xdg`) are reported and recorded in the run metadata.
@@ -63,14 +63,14 @@ The source is resolved in this order: the positional argument, then the `dir` va
 The export destination is controlled with `-o` / `--output` and defaults to the configured output directory or `./exports`:
 
 ```bash
-python codexexport.py --preset archive --output ./exports
+python codexexport.py --preset complete --output ./exports
 python codexexport.py --preset conversation --output "C:\\tmp\\codex-export"
 ```
 
 Preview the planned paths without writing files:
 
 ```bash
-python codexexport.py --preset archive --dry-run
+python codexexport.py --preset complete --dry-run
 ```
 
 ## List sessions
@@ -87,21 +87,23 @@ python codexexport.py --list-sessions --json
 
 ## Output layout
 
-Every run creates one timestamped folder directly under the output directory. Inside it, each session gets its own folder holding all of that session's product files as siblings:
+Every run creates one timestamped folder directly under the output directory. Run-wide JSONL artifacts live at its root; each session folder contains its faithful source copy and any Markdown transcript:
 
 ```
 exports/
-  2026-11-12_19-28-43_rag/
+  2026-11-12_19-28-43_complete/
     index.md                     # root index, grouped by project
     metadata.json                # machine-readable run metadata
-    index.rag.md                 # per-product index
+    index.memory.md              # per-product session index
+    index.corpus.md              # per-product session index
+    memory.jsonl                 # all raw events, tagged with session id/title
+    corpus.jsonl                 # all normalized messages, tagged with session id/title
     2026-10-27_sistema-asus_01a17f02/
-      2026-10-27_sistema-asus_01a17f02.rag.jsonl
-      2026-10-27_sistema-asus_01a17f02.memory.jsonl
+      2026-10-27_sistema-asus_01a17f02.faithful.jsonl
       2026-10-27_sistema-asus_01a17f02.transcript.md
 ```
 
-Product extensions: `transcript` → `.md`, `memory` → `.jsonl`, `rag` → `.jsonl`, `faithful` → `.jsonl`. This is a breaking change from the older `<product>/<project>/` tree; the former `--flat` layout has been removed.
+`memory.jsonl` and `corpus.jsonl` are each one file per run, not one file per session. Every line includes the session slug, ID, and title. `source` remains one byte-faithful original JSONL file per session. Markdown transcripts include YAML frontmatter and a session-title H1. The old `archive` and `rag` preset/product names are removed; use `complete` and `corpus` respectively.
 
 `--check-updates` only compares against runs under the selected output directory.
 
@@ -131,7 +133,7 @@ recorded in `metadata.json` when the option is active.
 ## Machine-readable output and exit codes
 
 ```bash
-python codexexport.py --preset rag --dry-run --json
+python codexexport.py --preset corpus --dry-run --json
 python codexexport.py --check-updates --json
 ```
 
@@ -145,13 +147,13 @@ Products are output formats. Presets are named recipes that choose a product set
 
 | Preset | Products and filtering | Data retention |
 |---|---|---|
-| `archive` | Source JSONL + transcript | Lossless source + readable derived view |
+| `complete` | Source JSONL + transcript + memory JSONL + corpus JSONL | Lossless source plus derived views |
 | `source` | Source JSONL only | Lossless |
 | `markdown` | Human-readable transcript | Derived view |
 | `conversation` | Clean dialogue | Derived, excludes tool activity and developer text by default |
 | `prompts` | User prompts only | Derived |
-| `memory` | Raw structured retrieval events | Derived, includes developer records by default |
-| `rag` | Normalized message documents | Derived, excludes developer text by default |
+| `memory` | Run-wide raw structured events | Derived, includes developer records by default |
+| `corpus` | Run-wide normalized message documents | Derived, excludes developer text by default |
 | `instructions` | Developer instructions only | Derived |
 
 For the full behavior matrix, cleanup rules, and architecture notes, see [architecture.md](architecture.md).
@@ -163,7 +165,7 @@ The CLI auto-detects `./codex_export.ini` (or a per-user config) when present. U
 Example:
 
 ```bash
-python codexexport.py --config ./codex_export.ini --preset archive
+python codexexport.py --config ./codex_export.ini --preset complete
 ```
 
 CLI flags override config values for the current execution.

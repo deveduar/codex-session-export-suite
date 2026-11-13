@@ -137,14 +137,24 @@ class ResolvedProduct(ProductSpec):
 class Preset:
     """Named export recipe with product selection and view policy."""
 
-    def __init__(self, name: str, description: str, products: Optional[List[str]] = None, **filters: Any):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        products: Optional[List[str]] = None,
+        product_options: Optional[Dict[str, Dict[str, Any]]] = None,
+        **filters: Any,
+    ):
         self.name = name
         self.description = description
         self.products = list(products or [])
+        self.product_options = dict(product_options or {})
         self.filters = dict(filters)
 
     def as_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {"description": self.description, "products": list(self.products)}
+        if self.product_options:
+            result["product_options"] = self.product_options
         result.update(self.filters)
         return result
 
@@ -159,14 +169,15 @@ class Preset:
         resolved: List[ResolvedProduct] = []
         for product_name in self.products:
             product = get_product(product_name)
+            options = {**self.filters, **self.product_options.get(product_name, {})}
             config = ResolvedProduct(
                 product,
-                role=self.filters.get("role"),
-                developer=self.filters.get("developer"),
-                message_only=bool(self.filters.get("message_only", False)),
-                clean_user_prompts=bool(self.filters.get("clean_user_prompts", False)),
-                strip_boilerplate=bool(self.filters.get("strip_boilerplate", False)),
-                truncate_chars=self.filters.get("truncate_chars"),
+                role=options.get("role"),
+                developer=options.get("developer"),
+                message_only=bool(options.get("message_only", False)),
+                clean_user_prompts=bool(options.get("clean_user_prompts", False)),
+                strip_boilerplate=bool(options.get("strip_boilerplate", False)),
+                truncate_chars=options.get("truncate_chars"),
             )
 
             if role:
@@ -206,10 +217,10 @@ memory = ProductSpec(
     kind="raw_jsonl",
 )
 
-rag = ProductSpec(
-    name="rag",
-    description="Normalized JSONL for embedding/indexing pipelines; user/assistant text only, developer content excluded by default",
-    kind="normalized_jsonl",
+corpus = ProductSpec(
+    name="corpus",
+    description="Run-wide normalized JSONL message corpus for indexing and retrieval",
+    kind="corpus_jsonl",
 )
 
 faithful = ProductSpec(
@@ -221,15 +232,26 @@ faithful = ProductSpec(
 PRODUCTS: Dict[str, ProductSpec] = {
     "transcript": transcript,
     "memory": memory,
-    "rag": rag,
+    "corpus": corpus,
     "faithful": faithful,
 }
 
+RUN_LEVEL_PRODUCTS = frozenset({"memory", "corpus"})
+
 PRESETS: Dict[str, Preset] = {
-    "archive": Preset(
-        "archive",
-        "Lossless source JSONL plus a chronological Markdown transcript with tool activity",
-        products=["faithful", "transcript"],
+    "complete": Preset(
+        "complete",
+        "Source-faithful sessions, full transcripts, raw event memory, and a normalized message corpus",
+        products=["faithful", "transcript", "memory", "corpus"],
+        product_options={
+            "memory": {"developer": "include"},
+            "corpus": {
+                "developer": "exclude",
+                "message_only": True,
+                "clean_user_prompts": True,
+                "strip_boilerplate": True,
+            },
+        },
     ),
     "source": Preset(
         "source",
@@ -266,14 +288,18 @@ PRESETS: Dict[str, Preset] = {
         products=["memory"],
         developer="include",
     ),
-    "rag": Preset(
-        "rag",
-        "Lossy: normalized message documents for LangChain, embeddings, and vector stores",
-        products=["rag"],
-        developer="exclude",
-        message_only=True,
-        clean_user_prompts=True,
-        strip_boilerplate=True,
+    "corpus": Preset(
+        "corpus",
+        "Lossy: normalized message documents for indexing, embeddings, and retrieval",
+        products=["corpus"],
+        product_options={
+            "corpus": {
+                "developer": "exclude",
+                "message_only": True,
+                "clean_user_prompts": True,
+                "strip_boilerplate": True,
+            },
+        },
     ),
     "instructions": Preset(
         "instructions",
@@ -352,8 +378,11 @@ def _apply_product_options(product: ProductSpec, options: Dict[str, Any]) -> Res
 def resolve_preset(name: str) -> List[ResolvedProduct]:
     preset = get_preset(name)
     preset_filters = {
-        key: value for key, value in preset.items() if key not in ("description", "product", "products")
+        key: value
+        for key, value in preset.items()
+        if key not in ("description", "product", "products", "product_options")
     }
+    product_options = preset.get("product_options") or {}
 
     if "products" in preset:
         product_specs = preset["products"]
@@ -364,9 +393,25 @@ def resolve_preset(name: str) -> List[ResolvedProduct]:
 
     resolved = []
     if isinstance(product_specs, dict):
-        items = [(product_name, {**preset_filters, **(options or {})}) for product_name, options in product_specs.items()]
+        items = [
+            (
+                product_name,
+                {
+                    **preset_filters,
+                    **product_options.get(product_name, {}),
+                    **(options or {}),
+                },
+            )
+            for product_name, options in product_specs.items()
+        ]
     else:
-        items = [(product_name, dict(preset_filters)) for product_name in product_specs]
+        items = [
+            (
+                product_name,
+                {**preset_filters, **product_options.get(product_name, {})},
+            )
+            for product_name in product_specs
+        ]
 
     for product_name, options in items:
         resolved.append(_apply_product_options(get_product(product_name), options or {}))
@@ -376,5 +421,5 @@ def resolve_preset(name: str) -> List[ResolvedProduct]:
 
 transcript_product = transcript
 memory_product = memory
-rag_product = rag
+corpus_product = corpus
 faithful_product = faithful
