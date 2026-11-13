@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=str,
         default=None,
-        help="Output directory (default: config or ./codex_exports)",
+        help="Output directory (default: config or ./exports)",
     )
 
     parser.add_argument(
@@ -210,6 +210,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="List available products and presets",
+    )
+
+    parser.add_argument(
+        "--list-sessions",
+        action="store_true",
+        default=False,
+        help="List discovered sessions and exit without exporting",
     )
 
     parser.add_argument(
@@ -504,6 +511,69 @@ def _error(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def _list_sessions(
+    codex_path: Path,
+    source_origin: str,
+    include_archived: bool,
+    sessions_selection: Optional[Sequence[str]],
+    last: Optional[int],
+    json_output: bool,
+) -> int:
+    """List selected session metadata without creating an export run."""
+    files = select_sessions(
+        discover_sessions(codex_path, include_archived=include_archived),
+        sessions=sessions_selection,
+        last=last,
+    )
+    codex_root = find_codex_root(codex_path)
+    session_index = load_session_index(codex_root)
+    records = [
+        build_session_record(
+            file_path,
+            codex_root,
+            session_index,
+            include_fingerprint=False,
+            include_usage=False,
+        )
+        for file_path in files
+    ]
+    sessions = [
+        {
+            "id": record.get("id"),
+            "started_at": record.get("started_at"),
+            "thread_name": record.get("thread_name"),
+            "project": record.get("project"),
+            "source_file": record.get("source_file"),
+        }
+        for record in records
+    ]
+    if json_output:
+        _emit_json(
+            {
+                "tool": "codex_session_exporter",
+                "version": VERSION,
+                "ok": True,
+                "source": {
+                    "resolved": str(codex_path),
+                    "exists": codex_path.exists(),
+                    "origin": source_origin,
+                },
+                "sessions_found": len(sessions),
+                "sessions": sessions,
+            }
+        )
+        return EXIT_OK
+
+    print(f"Sessions found: {len(sessions)}")
+    for session in sessions:
+        title = session["thread_name"] or session["project"] or "(untitled)"
+        print(
+            f"{session['started_at'] or '-'}  "
+            f"{session['id'] or '-'}  {title}  [{session['source_file']}]"
+        )
+    return EXIT_OK
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Main entry point for the CLI."""
     _configure_stdout()
@@ -587,6 +657,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     last = args.last if args.last is not None else config.get("last")
 
+    if args.list_sessions:
+        if codex_path is None:
+            _error("[!] Could not auto-detect the Codex directory.")
+            _error("  Pass it as the first argument or set it in codex_export.ini.")
+            return EXIT_CONFIG
+        if not codex_path.exists():
+            _error(f"[!] Codex input path does not exist: {codex_path}")
+            return EXIT_CONFIG
+        if last is not None and last <= 0:
+            _error("[!] --last must be greater than zero.")
+            return EXIT_CONFIG
+        return _list_sessions(
+            codex_path,
+            source_origin,
+            bool(include_archived),
+            sessions_selection,
+            last,
+            args.json,
+        )
+
     if args.no_timestamps is None:
         no_timestamps = not config["timestamps"]
     else:
@@ -651,7 +741,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _error(f"[!] Codex input path does not exist: {codex_path}")
         return EXIT_CONFIG
 
-    output_base = expand_path(output_value) or Path("./codex_exports")
+    output_base = expand_path(output_value) or Path("./exports")
 
     if args.check_updates:
         latest = find_latest_run(output_base)

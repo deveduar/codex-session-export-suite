@@ -94,7 +94,7 @@ These are different uses, not different “types of product truth”.
 
 ## Runs and metadata
 
-Each export creates one timestamped run folder directly under `codex_exports/`. The run folder contains:
+Each export creates one timestamped run folder directly under the configured output directory (default `./exports/`). The run folder contains:
 
 - `metadata.json` — machine-readable run summary (schema version 7)
 - `index.md` — root index grouped by project
@@ -115,6 +115,16 @@ The session slug keeps the `{date}_{slugified-label}_{short_id}` form. Project i
 
 The metadata records the effective run configuration, including the resolved source and its origin, the selected preset, and the resolved filters, so the real behavior is always traceable.
 
+`--list-sessions` uses the same discovery and selection rules but only reads
+session metadata; it creates no run directory or export files. `--recent-turns`
+trims events within each session, while `--last` and `--sessions` select whole
+session files. The active `recent_turns` value and each filtered session's
+`source_message_count` are recorded in run metadata.
+
+Transcripts are currently one file per session and are not chunked. If chunking
+is added, it should preserve complete events and produce an index rather than
+splitting at arbitrary byte offsets.
+
 ## Layout policy
 
 The exporter has a single on-disk layout: one timestamped run folder per invocation, with one sibling-file folder per session. The former `--flat` layout and its `layout` INI key have been removed. The run folder is always created directly under `--output`, which keeps launcher-style directory detection working.
@@ -129,6 +139,8 @@ The exporter has a single on-disk layout: one timestamped run folder per invocat
 ## Change detection
 
 `--check-updates` compares the current Codex scan against the latest export run using session fingerprints and output metadata. This helps detect new, modified, unchanged, or missing sessions without relying only on file timestamps.
+It uses the configured output directory; changing its default does not migrate
+older runs from another directory.
 
 ## Configuration files and CLI overrides
 

@@ -26,14 +26,21 @@ Export local Codex sessions with control over fidelity and format. A single CLI 
 Run the portable entry point from the repository root with your active Python interpreter:
 
 ```bash
+# Default behavior: export the transcript product for all discovered sessions.
+# An INI preset/products setting changes this default.
+python codexexport.py
+
+# Export the readable transcript product or the lossless archive preset.
 python codexexport.py --preset markdown
-python codexexport.py --preset source
 python codexexport.py --preset archive
 
+# Create a lossless source copy and structured retrieval products.
+python codexexport.py --preset source
 python codexexport.py --preset memory
 python codexexport.py --preset rag
 python codexexport.py --preset rag --strip-boilerplate
 
+# Export only prompts or clean dialogue; optionally keep developer text.
 python codexexport.py --preset prompts
 python codexexport.py --preset conversation
 python codexexport.py --preset conversation --include-developer
@@ -53,7 +60,7 @@ python codexexport.py /path/to/.codex --preset archive
 
 The source is resolved in this order: the positional argument, then the `dir` value in `codex_export.ini`, then `CODEX_HOME`, then `~/.codex`, then XDG auto-detection. The chosen source and its origin (`argument`, `config`, `env`, `home`, `xdg`) are reported and recorded in the run metadata.
 
-The export destination is controlled with `-o` / `--output` and defaults to the configured output directory or `./codex_exports`:
+The export destination is controlled with `-o` / `--output` and defaults to the configured output directory or `./exports`:
 
 ```bash
 python codexexport.py --preset archive --output ./exports
@@ -66,12 +73,24 @@ Preview the planned paths without writing files:
 python codexexport.py --preset archive --dry-run
 ```
 
+## List sessions
+
+List discovered sessions without creating an export. The command accepts the
+same source path and session selectors as an export, and `--json` emits
+machine-readable session metadata:
+
+```bash
+python codexexport.py --list-sessions
+python codexexport.py --list-sessions --last 5
+python codexexport.py --list-sessions --json
+```
+
 ## Output layout
 
 Every run creates one timestamped folder directly under the output directory. Inside it, each session gets its own folder holding all of that session's product files as siblings:
 
 ```
-codex_exports/
+exports/
   2026-11-12_19-28-43_rag/
     index.md                     # root index, grouped by project
     metadata.json                # machine-readable run metadata
@@ -84,6 +103,8 @@ codex_exports/
 
 Product extensions: `transcript` → `.md`, `memory` → `.jsonl`, `rag` → `.jsonl`, `faithful` → `.jsonl`. This is a breaking change from the older `<product>/<project>/` tree; the former `--flat` layout has been removed.
 
+`--check-updates` only compares against runs under the selected output directory.
+
 ## Selecting sessions
 
 Export only specific sessions, or only the most recent ones:
@@ -94,6 +115,18 @@ python codexexport.py --last 5
 ```
 
 `--sessions` matches the session id, its short form, or the source filename. `--last N` keeps the N most recent sessions by session timestamp. This is distinct from `--recent-turns`, which trims turns *within* each selected session.
+
+For example, export only the last five user turns from each of the five newest
+sessions:
+
+```bash
+python codexexport.py --preset conversation --last 5 --recent-turns 5
+```
+
+`--recent-turns` retains the last N user turns and the following assistant and
+tool events; developer context before that window is preserved. The run-level
+`recent_turns` value and each session's pre-filter `source_message_count` are
+recorded in `metadata.json` when the option is active.
 
 ## Machine-readable output and exit codes
 
@@ -145,7 +178,7 @@ Compare the current Codex session set with the newest export run:
 python codexexport.py --check-updates
 ```
 
-This inspects the latest export metadata under `codex_exports/` and reports which sessions are new, modified, unchanged, or missing from the current scan. It is useful when you want to confirm whether a fresh Codex export has already been captured or whether anything changed since the last run.
+This inspects the latest export metadata under the configured output directory (default `./exports/`) and reports which sessions are new, modified, unchanged, or missing from the current scan. It is useful when you want to confirm whether a fresh Codex export has already been captured or whether anything changed since the last run.
 
 ## CLI help
 

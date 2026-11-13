@@ -30,12 +30,6 @@ def format_markdown_transcript(
     """
     lines = []
     
-    # Header
-    lines.append(f"# Codex History: `{filename}`")
-    lines.append("")
-    lines.append("---")
-    lines.append("")
-    
     # Keep the original chronological order: user/assistant turns interleaved.
     for msg in messages:
         role = msg.get("role")
@@ -77,7 +71,7 @@ def format_markdown_activity_transcript(
     include_timestamps: bool = True,
 ) -> str:
     """Format messages and tool activity as one chronological Markdown transcript."""
-    lines = [f"# Codex History: `{filename}`", "", "---", ""]
+    lines: List[str] = []
 
     for event in events:
         kind = event.get("kind")
@@ -90,7 +84,7 @@ def format_markdown_activity_transcript(
                 "developer": "Developer instruction",
             }
             label = labels.get(role, str(role or "Message"))
-            heading = f"### {label}"
+            heading = f"## {label}"
             if include_timestamps and timestamp:
                 heading += f" · {timestamp}"
             lines.extend([heading, ""])
@@ -98,7 +92,7 @@ def format_markdown_activity_transcript(
             lines.extend([f"> {line}" if line else ">" for line in text.splitlines()] or [">"])
         elif kind == "tool_call":
             tool = str(event.get("tool") or "tool")
-            heading = f"### Tool call: `{tool}`"
+            heading = f"## Tool call: `{tool}`"
             if include_timestamps and timestamp:
                 heading += f" · {timestamp}"
             lines.extend([heading, ""])
@@ -111,7 +105,7 @@ def format_markdown_activity_transcript(
                 lines.extend(_code_block(str(event["arguments"])))
         elif kind == "tool_output":
             tool = str(event.get("tool") or "tool")
-            heading = f"### Tool output: `{tool}`"
+            heading = f"## Tool output: `{tool}`"
             if include_timestamps and timestamp:
                 heading += f" · {timestamp}"
             lines.extend([heading, ""])
@@ -126,7 +120,7 @@ def format_markdown_activity_transcript(
                 lines.extend(_code_block(str(event["output"])))
         elif kind == "activity":
             activity = str(event.get("activity") or "activity").replace("_", " ").title()
-            heading = f"### {activity}"
+            heading = f"## {activity}"
             if include_timestamps and timestamp:
                 heading += f" · {timestamp}"
             lines.extend([heading, ""])

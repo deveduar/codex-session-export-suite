@@ -1,4 +1,3 @@
-
 .gitignore
 private.md
 archive/
@@ -8,4 +7,5 @@ __pycache__/
 *.pyi
 *.egg-info/
 build/
-codex_exports/
+# Misc
+exports/

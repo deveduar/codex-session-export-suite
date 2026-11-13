@@ -17,7 +17,7 @@ CONFIG_FILENAME = "codex_export.ini"
 
 DEFAULTS: Dict[str, Any] = {
     "codex_dir": None,
-    "output_dir": "./codex_exports",
+    "output_dir": "./exports",
     "include_archived": False,
     "preset": None,
     "products": None,
