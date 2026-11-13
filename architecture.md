@@ -52,6 +52,12 @@ Presets are the user-facing export modes. They are recipes, not product identiti
 - `corpus` — normalized message documents; excludes developer text by default
 - `instructions` — developer instructions only
 
+`complete` demonstrates a preset with product-specific policy: the faithful
+source is copied unchanged, `memory` retains developer events, and `corpus`
+keeps normalized messages while excluding developer content and cleaning user
+prompts. These policies are declared per product, not applied as one global
+filter across the bundle.
+
 The important rule is simple:
 
 - same product can be reused under different presets
@@ -112,6 +118,10 @@ Session-scoped files are siblings sharing the session slug. The raw memory and n
 ```
 
 The session slug keeps the `{date}_{slugified-label}_{short_id}` form. Project information is metadata-only and used for grouping in the root index.
+
+Each Markdown session file starts with YAML frontmatter containing its title,
+session ID, date, project, and source path when available; the H1 uses the
+session title from Codex's index, falling back to the session slug.
 
 The metadata records the effective run configuration, including the resolved source and its origin, the selected preset, and the resolved filters, so the real behavior is always traceable.
 Each JSONL record carries `session`, `session_id`, and `session_title`; `metadata.json` lists run-level files in `product_artifacts` and records which sessions contributed each product. `complete` resolves distinct policies per product, so the faithful source is untouched, `memory` retains developer events, and `corpus` excludes developer content and cleans user prompts by default.

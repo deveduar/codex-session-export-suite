@@ -23,67 +23,62 @@ Export local Codex sessions with control over fidelity and format. A single CLI 
 
 ## Quick start
 
-Run the portable entry point from the repository root with your active Python interpreter:
+Run the portable entry point from the repository root. The examples below are
+the command cheatsheet; comments distinguish session selection from per-session
+turn filtering and faithful source copies from derived JSONL.
 
 ```bash
-# Default behavior: export the transcript product for all discovered sessions.
-# An INI preset/products setting changes this default.
+# No preset in the CLI or INI means the transcript product for all sessions.
 python codexexport.py
 
-# Export the readable transcript product or every output with complete.
-python codexexport.py --preset markdown
+# The broad bundle includes faithful source, transcript, event memory, corpus.
 python codexexport.py --preset complete
 
-# Create a source-only copy or either run-wide JSONL.
+# Keep only original source files, or export one run-wide derived JSONL.
 python codexexport.py --preset source
 python codexexport.py --preset memory
 python codexexport.py --preset corpus
-python codexexport.py --preset corpus --strip-boilerplate
 
-# Export only prompts or clean dialogue; optionally keep developer text.
+# Markdown views: full activity, clean conversation, or prompts only.
+python codexexport.py --preset markdown
 python codexexport.py --preset prompts
 python codexexport.py --preset conversation
 python codexexport.py --preset conversation --include-developer
+
+# Presets can be combined with runtime overrides; products can be selected directly.
+python codexexport.py --preset corpus --strip-boilerplate
+python codexexport.py --products transcript memory --role assistant --truncate 2000
+
+# Select sessions, then optionally trim turns inside each selected session.
+python codexexport.py --sessions 01a17f02 01a087aa --preset complete
+python codexexport.py --preset conversation --last 5 --recent-turns 5
+
+# List sessions without exporting; --json is machine-readable.
+python codexexport.py --list-sessions
+python codexexport.py --list-sessions --last 5 --json
+
+# Preview without writes, inspect a plan, or compare the latest run.
+python codexexport.py --preset complete --dry-run --json
+python codexexport.py --list-presets --json
+python codexexport.py --check-updates --json
+
+# Override source, config, or destination for one invocation.
+python codexexport.py /path/to/.codex --config ./codex_export.ini --preset complete --output ./exports
 ```
 
-Replace `python` with the interpreter command used by your environment (for example, `python3` or `py`).
+Replace `python` with the interpreter command used by your environment (for
+example, `python3` or `py`). `complete` keeps the original source per session;
+`memory` and `corpus` are derived run-wide JSONL files, not faithful source
+archives.
 
 ## Input and output paths
 
 The Codex input path is optional. If you omit it, the tool auto-detects the local Codex install (`CODEX_HOME`, `~/.codex`, or `%USERPROFILE%\.codex` on Windows).
 
-If you want to point to a specific source explicitly, you can pass the Codex directory, its `sessions` directory, a subdirectory, or a single `.jsonl` file:
-
-```bash
-python codexexport.py /path/to/.codex --preset complete
-```
-
-The source is resolved in this order: the positional argument, then the `dir` value in `codex_export.ini`, then `CODEX_HOME`, then `~/.codex`, then XDG auto-detection. The chosen source and its origin (`argument`, `config`, `env`, `home`, `xdg`) are reported and recorded in the run metadata.
-
-The export destination is controlled with `-o` / `--output` and defaults to the configured output directory or `./exports`:
-
-```bash
-python codexexport.py --preset complete --output ./exports
-python codexexport.py --preset conversation --output "C:\\tmp\\codex-export"
-```
-
-Preview the planned paths without writing files:
-
-```bash
-python codexexport.py --preset complete --dry-run
-```
-
-## List sessions
-
-List discovered sessions without creating an export. The command accepts the
-same source path and session selectors as an export, and `--json` emits
-machine-readable session metadata:
-
-```bash
-python codexexport.py --list-sessions
-python codexexport.py --list-sessions --last 5
-python codexexport.py --list-sessions --json
-```
+You can pass the Codex root, its `sessions` directory, a subdirectory, or one
+`.jsonl` file as the positional source. Resolution order is positional source,
+`codex_export.ini`, `CODEX_HOME`, `~/.codex`, then XDG. `--output` overrides the
+configured destination, which defaults to `./exports`.
 
 ## Output layout
 
@@ -109,21 +104,9 @@ exports/
 
 ## Selecting sessions
 
-Export only specific sessions, or only the most recent ones:
-
-```bash
-python codexexport.py --sessions 01a17f02 01a087aa
-python codexexport.py --last 5
-```
-
-`--sessions` matches the session id, its short form, or the source filename. `--last N` keeps the N most recent sessions by session timestamp. This is distinct from `--recent-turns`, which trims turns *within* each selected session.
-
-For example, export only the last five user turns from each of the five newest
-sessions:
-
-```bash
-python codexexport.py --preset conversation --last 5 --recent-turns 5
-```
+`--sessions` matches the session ID, short ID, or source filename. `--last N`
+selects the most recent whole sessions. These differ from `--recent-turns`,
+which limits turns *within* each selected session.
 
 `--recent-turns` retains the last N user turns and the following assistant and
 tool events; developer context before that window is preserved. The run-level
@@ -131,11 +114,6 @@ tool events; developer context before that window is preserved. The run-level
 recorded in `metadata.json` when the option is active.
 
 ## Machine-readable output and exit codes
-
-```bash
-python codexexport.py --preset corpus --dry-run --json
-python codexexport.py --check-updates --json
-```
 
 `--json` prints a single JSON object on stdout (and implies `--quiet`). `-q` / `--quiet` suppresses per-file and informational lines but keeps errors and a final summary. Errors go to stderr.
 
@@ -160,34 +138,20 @@ For the full behavior matrix, cleanup rules, and architecture notes, see [archit
 
 ## Configuration file
 
-The CLI auto-detects `./codex_export.ini` (or a per-user config) when present. Use `--config` to select a specific file explicitly.
-
-Example:
-
-```bash
-python codexexport.py --config ./codex_export.ini --preset complete
-```
-
-CLI flags override config values for the current execution.
+The CLI auto-detects `./codex_export.ini` (or a per-user config). Use
+`--config` to choose another file; explicit CLI flags override its values.
 
 For the full precedence rules, preset-vs-runtime behavior, and metadata semantics, see [architecture.md](architecture.md).
 
 ## Check for updates
 
-Compare the current Codex session set with the newest export run:
-
-```bash
-python codexexport.py --check-updates
-```
-
-This inspects the latest export metadata under the configured output directory (default `./exports/`) and reports which sessions are new, modified, unchanged, or missing from the current scan. It is useful when you want to confirm whether a fresh Codex export has already been captured or whether anything changed since the last run.
+`--check-updates` compares the current scan with the latest run under the
+configured output directory (default `./exports/`) and reports new, modified,
+unchanged, or not-found sessions.
 
 ## CLI help
 
-```bash
-python codexexport.py --help
-python codexexport.py --list-presets
-```
+Run `python codexexport.py --help` for the complete flag reference.
 
 ## Disclaimer
 

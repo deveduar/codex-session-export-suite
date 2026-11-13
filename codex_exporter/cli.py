@@ -972,7 +972,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         display_name = str(record["slug"])
         session_dir = run_dir / session_folder_name(display_name)
-        session_title = str(record.get("thread_name") or record.get("project") or display_name)
         for product_config in product_configs:
             product_name = product_config.name
             product_events = product_config.select_events(events)
