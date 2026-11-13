@@ -93,9 +93,9 @@ exports/
     index.corpus.md              # per-product session index
     memory.jsonl                 # all raw events, tagged with session id/title
     corpus.jsonl                 # all normalized messages, tagged with session id/title
-    2026-10-27_sistema-asus_01a17f02/
-      2026-10-27_sistema-asus_01a17f02.faithful.jsonl
-      2026-10-27_sistema-asus_01a17f02.transcript.md
+    2026-10-27_example_01a17f02/
+      2026-10-27_example_01a17f02.faithful.jsonl
+      2026-10-27_example_01a17f02.transcript.md
 ```
 
 `memory.jsonl` and `corpus.jsonl` are each one file per run, not one file per session. Every line includes the session slug, ID, and title. `source` remains one byte-faithful original JSONL file per session. Markdown transcripts include YAML frontmatter and a session-title H1. The old `archive` and `rag` preset/product names are removed; use `complete` and `corpus` respectively.
