@@ -117,6 +117,8 @@ recorded in `metadata.json` when the option is active.
 
 `--json` prints a single JSON object on stdout (and implies `--quiet`). `-q` / `--quiet` suppresses per-file and informational lines but keeps errors and a final summary. Errors go to stderr.
 
+`--list-sessions --json` includes a `revision` for each session, taken from the source JSONL file's `mtime_ns`. This lightweight token is intended for launchers to compare inventories; it is not an ISO timestamp. Use `started_at` for the session start time. Export bundles separately record source size, mtime, and SHA-256 fingerprints for Codex's own update comparison; the new listing token does not change that metadata.
+
 Exit codes: `0` success, `1` configuration or source error, `2` no data (source valid but no sessions matched).
  
 ## Products and presets

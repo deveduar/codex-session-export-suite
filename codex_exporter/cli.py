@@ -530,6 +530,20 @@ def _error(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def _source_revision(record: Dict[str, Any], codex_root: Optional[Path]) -> Optional[int]:
+    """Return a cheap source-file revision for change-aware launchers."""
+    source_file = record.get("source_file")
+    if not source_file or codex_root is None:
+        return None
+    path = Path(source_file)
+    if not path.is_absolute():
+        path = codex_root / path
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
 def _list_sessions(
     codex_path: Path,
     source_origin: str,
@@ -560,6 +574,7 @@ def _list_sessions(
         {
             "id": record.get("id"),
             "started_at": record.get("started_at"),
+            "revision": _source_revision(record, codex_root),
             "thread_name": record.get("thread_name"),
             "project": record.get("project"),
             "source_file": record.get("source_file"),
