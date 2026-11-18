@@ -10,7 +10,7 @@ import argparse
 import json
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -574,6 +574,8 @@ def _list_sessions(
         {
             "id": record.get("id"),
             "started_at": record.get("started_at"),
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at"),
             "revision": _source_revision(record, codex_root),
             "thread_name": record.get("thread_name"),
             "project": record.get("project"),
@@ -923,7 +925,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _error("  Pass the Codex directory, sessions directory, a subdirectory, or a .jsonl file.")
         return EXIT_NO_DATA
 
-    now = datetime.now().astimezone()
+    now = datetime.now(timezone.utc)
     product_names = [product.name for product in product_configs]
 
     label = run_label(selected_preset, product_names)
@@ -1054,7 +1056,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "tool": "codex_session_exporter",
         "version": VERSION,
         "run_id": run_dir.name,
-        "generated_at": now.isoformat(),
+        "generated_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "codex_dir": str(codex_path.absolute()),
         "source_origin": source_origin,
         "output_dir": str(output_base.absolute()),

@@ -6,7 +6,7 @@ import json
 import hashlib
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -291,14 +291,41 @@ def slugify(value: Any, max_length: int = 80) -> str:
     return text[:max_length].rstrip("-_.") or "session"
 
 
-def session_date(metadata: Dict[str, Any], file_path: Path) -> str:
-    """Return YYYY-MM-DD from session metadata or the source filename."""
-    timestamp = metadata.get("timestamp")
-    if timestamp:
-        match = re.match(r"(\d{4}-\d{2}-\d{2})", str(timestamp))
-        if match:
-            return match.group(1)
+def utc_iso_timestamp(value: Any) -> Optional[str]:
+    """Normalize a Codex timestamp to an ISO-8601 UTC string."""
+    if not value:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            epoch = float(value)
+            if abs(epoch) > 100_000_000_000:
+                epoch /= 1000
+            parsed = datetime.fromtimestamp(epoch, tz=timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (OSError, OverflowError, TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
+
+def _file_modified_at(file_path: Path) -> Optional[str]:
+    try:
+        modified = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+    except (OSError, OverflowError, ValueError):
+        return None
+    return modified.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def session_date(metadata: Dict[str, Any], file_path: Path) -> str:
+    """Return the UTC source-modification date, then fall back to creation."""
+    updated_at = _file_modified_at(file_path)
+    if updated_at:
+        return updated_at[:10]
+    created_at = utc_iso_timestamp(metadata.get("timestamp"))
+    if created_at:
+        return created_at[:10]
     match = re.search(r"(\d{4}-\d{2}-\d{2})", file_path.name)
     return match.group(1) if match else "unknown-date"
 
@@ -379,6 +406,8 @@ def build_session_record(
         "cwd": metadata.get("cwd"),
         "workspace_roots": metadata.get("workspace_roots") or [],
         "started_at": metadata.get("timestamp"),
+        "created_at": utc_iso_timestamp(metadata.get("timestamp")),
+        "updated_at": _file_modified_at(file_path),
         "date": identity["date"],
         "source": metadata.get("source"),
         "originator": metadata.get("originator"),
@@ -404,7 +433,7 @@ def run_label(preset: Optional[str], products: List[str]) -> str:
 
 def next_run_dir(output_dir: Path, label: str, now: datetime) -> Path:
     """Return an unused timestamped run directory path."""
-    stamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+    stamp = now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     base_name = f"{stamp}_{slugify(label, 40)}"
     candidate = output_dir / base_name
 
