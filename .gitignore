@@ -1,11 +1,9 @@
-.gitignore
-private.md
-archive/
 # Python
 __pycache__/
 *.py[c]
 *.pyi
 *.egg-info/
 build/
-# Misc
+
+# Default folder output 
 exports/
