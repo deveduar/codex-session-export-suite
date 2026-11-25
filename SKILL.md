@@ -21,11 +21,11 @@ Use this workflow to list options, preview, or export local Codex sessions.
 3. Use `--preset` for a named recipe, or `--products` for an explicit product selection. Do not pass both.
 4. Use `--dry-run` when the user wants to inspect the planned export before writing files. Use `--check-updates` when they want to compare current sessions with the latest export. Add `--json` for machine-readable output and `--quiet` to reduce noise.
 5. Use `--sessions <id...>` to export specific sessions, or `--last N` for the N most recent. This selects whole sessions; `--recent-turns` instead trims retained turns, including events, messages, and parts, within each session.
-6. Run the requested export and report the effective output location and any CLI errors. Each run produces one timestamped folder with per-project folders holding sibling product files.
+6. Run the requested export and report the effective output location and any CLI errors. Each run produces one `<timestamp>_<label>` folder; `--run-label` overrides the label, and `corpus.jsonl`/`memory.jsonl` sit at the run root while per-project folders hold Markdown and faithful files.
 
 ## Output and exit codes
 
-Each run writes one folder under `--output` containing `metadata.json`, `index.md`, and `index.<product>.md`, plus one folder per project holding product files as siblings (for example `<slug>.memory.jsonl` and `<slug>.transcript.md`). Exit codes are `0` success, `1` configuration/source error, and `2` no data.
+Each run writes one `<timestamp>_<label>` folder under `--output` containing `metadata.json`, `index.md`, `index.<product>.md`, `corpus.jsonl`, and `memory.jsonl`, plus one folder per project holding transcript and faithful files as siblings. Exit codes are `0` success, `1` configuration/source error, and `2` no data.
 
 ## Configuration
 

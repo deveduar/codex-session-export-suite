@@ -115,6 +115,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--run-label",
+        type=str,
+        default=None,
+        help="Label appended to the timestamped run folder (default: preset or products)",
+    )
+
+    parser.add_argument(
         "--products",
         type=str,
         nargs="+",
@@ -544,31 +551,6 @@ def _register_output(
         paths.append(relative)
     if not dry_run:
         written_output_paths.add(relative)
-
-
-def process_structured_product(
-    product_name: str,
-    record: Dict[str, Any],
-    output_file: Path,
-    quiet: bool = False,
-    dry_run: bool = False,
-) -> None:
-    if dry_run:
-        if not quiet:
-            print(f"[*] {product_name}: -> {output_file}")
-        return
-
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    content = (
-        format_jsonl_memory(record)
-        if product_name == "memory"
-        else format_jsonl_corpus(record)
-    )
-    with open(output_file, "w", encoding="utf-8") as handle:
-        handle.write(content)
-    if not quiet:
-        label = "Session memory" if product_name == "memory" else "Flattened corpus"
-        print(f"[+] {label} exported: {output_file.name}")
 
 
 def process_session(
@@ -1060,7 +1042,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     now = datetime.now(timezone.utc)
     product_names = [product.name for product in product_configs]
 
-    label = run_label(selected_preset, product_names)
+    label = (args.run_label or "").strip() or run_label(selected_preset, product_names)
     run_dir: Path = next_run_dir(output_base, label, now)
     if not args.dry_run:
         run_dir = create_run_dir(output_base, label, now)
@@ -1245,6 +1227,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if wants_structured:
         document_sessions, children_by_parent = _session_tree(session_records)
         corpus_documents: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+        memory_documents: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
         for document_session in document_sessions:
             members = [document_session] + _session_descendants(
                 document_session, children_by_parent
@@ -1308,22 +1291,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ):
                     continue
 
-                if product_name == "corpus":
-                    output_file = run_dir / "corpus.jsonl"
-                    corpus_documents.append((document_session, document))
-                else:
-                    output_file = (
-                        run_dir
-                        / str(document_session["project_folder"])
-                        / product_filename(str(document_session["slug"]), product_name)
-                    )
-                    process_structured_product(
-                        product_name,
-                        document,
-                        output_file,
-                        quiet=quiet,
-                        dry_run=args.dry_run,
-                    )
+                if product_name in ("corpus", "memory"):
+                    output_file = run_dir / f"{product_name}.jsonl"
+                    if product_name == "corpus":
+                        corpus_documents.append((document_session, document))
+                    else:
+                        memory_documents.append((document_session, document))
                 _register_output(
                     document_session,
                     product_name,
@@ -1355,6 +1328,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 if not quiet:
                     print(f"[+] Flattened corpus exported: {corpus_file.name}")
 
+        if memory_documents:
+            memory_file = run_dir / "memory.jsonl"
+            if args.dry_run:
+                if not quiet:
+                    print(f"[*] memory: -> {memory_file}")
+            else:
+                memory_file.parent.mkdir(parents=True, exist_ok=True)
+                with memory_file.open("w", encoding="utf-8") as handle:
+                    for _session, document in memory_documents:
+                        handle.write(format_jsonl_memory(document))
+                        handle.write("\n")
+                if not quiet:
+                    print(f"[+] Session memory exported: {memory_file.name}")
+
     for record in session_records:
         if not record.get("outputs") and not record.get("nested_in"):
             record["skipped"] = True
@@ -1382,6 +1369,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "tool": "codex_session_exporter",
         "version": VERSION,
         "run_id": run_dir.name,
+        "run_label": label,
         "generated_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "codex_dir": str(codex_path.absolute()),
         "source_origin": source_origin,

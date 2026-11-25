@@ -82,7 +82,7 @@ configured destination, which defaults to `./exports`.
 
 ## Output layout
 
-Every run creates one timestamped folder directly under the output directory. Session artifacts are grouped directly in a project folder named `<YYYY-MM-DD>_<project>_<hash12>`; the date is the newest included session in that project and the suffix is the first 12 hex digits of SHA-256 over the canonical cwd/workspace-root key. A missing path uses `no-project_<hash12>`. Windows drive paths and their `/mnt/<drive>` WSL forms hash to the same ID.
+Every run creates one `<timestamp>_<label>` folder directly under the output directory. `--run-label` overrides the default label derived from the preset or product list. Session artifacts are grouped directly in a project folder named `<YYYY-MM-DD>_<project>_<hash12>`; the date is the newest included session in that project and the suffix is the first 12 hex digits of SHA-256 over the canonical cwd/workspace-root key. A missing path uses `no-project_<hash12>`. Windows drive paths and their `/mnt/<drive>` WSL forms hash to the same ID.
 
 ```
 exports/
@@ -92,17 +92,17 @@ exports/
     index.memory.md              # per-product session index
     index.corpus.md              # per-product session index
     corpus.jsonl                 # one flat document per root session
+    memory.jsonl                 # one nested document per root session
     2026-10-27_example-project_a289bbc5b59c/
       2026-10-27_example_01a17f02.faithful.jsonl
       2026-10-27_example_01a17f02.transcript.md
-      2026-10-27_example_01a17f02.memory.jsonl
     2026-10-26_no-project_5f1c0aa9b2d3/
       2026-10-26_session_02b3c4d5.faithful.jsonl
       2026-10-26_session_02b3c4d5.transcript.md
-      2026-10-26_session_02b3c4d5.memory.jsonl
 ```
 
-There is no date-only folder above the project folder and no per-session folder. Each session file name keeps the `{date}_{slug}_{short-id}` shape, where the date comes from the source JSONL mtime in UTC, then the session timestamp, then a filename date, otherwise `unknown-date`. `memory` writes one root record per root session and nests subagent sessions as children; nested children do not receive their own memory file. `corpus` writes one `corpus.jsonl` file at the run root with one flattened document per root session, including child text. `source` remains one byte-faithful original JSONL file per session. Markdown transcripts include YAML frontmatter and a session-title H1. Sessions with no extractable content do not receive empty `memory` or `corpus` lines; they remain listed as skipped in run metadata. A selected subagent whose parent is not selected is emitted as its own record with `parent_unresolved: true` instead of being promoted to a root; it is not treated as a parent of unrelated sessions. The old `archive` and `rag` preset/product names are removed; use `complete` and `corpus` respectively.
+There is no date-only folder above the project folder and no per-session folder. Each session file name keeps the `{date}_{slug}_{short-id}` shape, where the date comes from the source JSONL mtime in UTC, then the session timestamp, then a filename date, otherwise `unknown-date`. `memory` writes one `memory.jsonl` at the run root with one nested record per root session and subagent sessions as children; nested children do not receive their own memory file. `corpus` writes one `corpus.jsonl` file at the run root with one flattened document per root session, including child text.
+ `source` remains one byte-faithful original JSONL file per session. Markdown transcripts include YAML frontmatter and a session-title H1. Sessions with no extractable content do not receive empty `memory` or `corpus` lines; they remain listed as skipped in run metadata. A selected subagent whose parent is not selected is emitted as its own record with `parent_unresolved: true` instead of being promoted to a root; it is not treated as a parent of unrelated sessions. The old `archive` and `rag` preset/product names are removed; use `complete` and `corpus` respectively.
 
 
 `--check-updates` only compares against runs under the selected output directory.

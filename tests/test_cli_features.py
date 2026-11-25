@@ -22,6 +22,10 @@ from codex_exporter.output import (
 from codex_exporter.products import PRESETS, PRODUCTS, resolve_preset
 
 
+def read_jsonl(path: Path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
 def write_session(
     path: Path,
     session_id: str,
@@ -275,7 +279,7 @@ class CliFeatureTests(unittest.TestCase):
 
             metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["product_artifacts"], {})
-            self.assertEqual(metadata["counts"]["files_written"], 7)
+            self.assertEqual(metadata["counts"]["files_written"], 6)
             self.assertEqual(
                 metadata["counts"]["product_counts"],
                 {
@@ -286,10 +290,12 @@ class CliFeatureTests(unittest.TestCase):
                 },
             )
             for product_name, paths in metadata["artifacts"].items():
-                self.assertEqual(len(paths), 1 if product_name == "corpus" else 2)
+                self.assertEqual(
+                    len(paths), 1 if product_name in ("corpus", "memory") else 2
+                )
                 for relative in paths:
-                    if product_name == "corpus":
-                        self.assertEqual(relative, "corpus.jsonl")
+                    if product_name in ("corpus", "memory"):
+                        self.assertEqual(relative, f"{product_name}.jsonl")
                     else:
                         self.assertTrue(relative.startswith(f"{project_dir.name}/"))
                     self.assertFalse(Path(relative).is_absolute())
@@ -297,9 +303,36 @@ class CliFeatureTests(unittest.TestCase):
             root_index = (run_dir / "index.md").read_text(encoding="utf-8")
             memory_index = (run_dir / "index.memory.md").read_text(encoding="utf-8")
             self.assertIn(f"{project_dir.name}/", root_index)
-            self.assertIn(f"{project_dir.name}/", memory_index)
+            self.assertIn("memory.jsonl", memory_index)
             self.assertNotIn("](\\", root_index)
             self.assertFalse(list(run_dir.glob("*/*/*")))
+
+    def test_run_label_controls_run_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source, output, config = setup_export(
+                root,
+                [("labelled", "ses_55555555", {"cwd": "/work/labels", "messages": (("user", "hi"),)})],
+            )
+
+            result, _ = run_cli(
+                [
+                    str(source),
+                    "--config",
+                    str(config),
+                    "--preset",
+                    "memory",
+                    "--run-label",
+                    "broad",
+                    "--json",
+                ]
+            )
+
+            self.assertEqual(result, 0)
+            run_dir = next(output.iterdir())
+            self.assertRegex(run_dir.name, r"^\d{8}T\d{6}Z_broad$")
+            metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["run_label"], "broad")
 
     def test_no_project_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -335,8 +368,8 @@ class CliFeatureTests(unittest.TestCase):
             )
             for product_name, paths in metadata["artifacts"].items():
                 for relative in paths:
-                    if product_name == "corpus":
-                        self.assertEqual(relative, "corpus.jsonl")
+                    if product_name in ("corpus", "memory"):
+                        self.assertEqual(relative, f"{product_name}.jsonl")
                     else:
                         self.assertTrue(relative.startswith(f"{project_dirs[0].name}/"))
 
@@ -360,10 +393,12 @@ class CliFeatureTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             self.assertIn("dry-project_", stdout)
-            self.assertIn(".memory.jsonl", stdout)
+            self.assertIn("memory.jsonl", stdout)
             self.assertIn("corpus.jsonl", stdout)
             self.assertRegex(stdout, r"corpus: -> [^\n]*Z_complete/corpus\.jsonl")
+            self.assertRegex(stdout, r"memory: -> [^\n]*Z_complete/memory\.jsonl")
             self.assertRegex(stdout, r"Would write: [^\n]*Z_complete/corpus\.jsonl")
+            self.assertRegex(stdout, r"Would write: [^\n]*Z_complete/memory\.jsonl")
             self.assertIsNone(
                 re.search(r"Would write: [^\n]*Z_complete/[^/]+\.memory\.jsonl", stdout)
             )
@@ -419,13 +454,13 @@ class CliFeatureTests(unittest.TestCase):
             self.assertEqual(metadata["counts"]["product_counts"]["memory"], 2)
             self.assertEqual(metadata["counts"]["product_counts"]["corpus"], 2)
 
-            memory_files = sorted(run_dir.rglob("*.memory.jsonl"))
+            memory_file = run_dir / "memory.jsonl"
             corpus_file = run_dir / "corpus.jsonl"
-            self.assertEqual(len(memory_files), 2)
+            self.assertTrue(memory_file.is_file())
             self.assertTrue(corpus_file.is_file())
-            self.assertFalse(any("child" in path.name for path in memory_files + [corpus_file]))
+            self.assertEqual(metadata["artifacts"]["memory"], ["memory.jsonl"])
 
-            memory_records = [json.loads(path.read_text(encoding="utf-8")) for path in memory_files]
+            memory_records = read_jsonl(memory_file)
             memory_by_id = {record["session_id"]: record for record in memory_records}
             self.assertEqual(set(memory_by_id), {"root-1", "solo-1"})
             root_memory = memory_by_id["root-1"]
@@ -535,9 +570,9 @@ class CliFeatureTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             run_dir = next(output.iterdir())
-            memory_files = list(run_dir.rglob("*.memory.jsonl"))
-            self.assertEqual(len(memory_files), 1)
-            record = json.loads(memory_files[0].read_text(encoding="utf-8"))
+            memory_records = read_jsonl(run_dir / "memory.jsonl")
+            self.assertEqual(len(memory_records), 1)
+            record = memory_records[0]
             self.assertEqual(record["session_id"], "tree-root")
             self.assertEqual(len(record["children"]), 1)
             child = record["children"][0]
@@ -629,7 +664,7 @@ class CliFeatureTests(unittest.TestCase):
             run_dir = next(output.iterdir())
             metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["product_artifacts"], {})
-            self.assertEqual(metadata["counts"]["files_written"], 7)
+            self.assertEqual(metadata["counts"]["files_written"], 6)
 
             transcript_files = list(run_dir.glob("*/*.transcript.md"))
             self.assertEqual(len(transcript_files), len(session_specs))
@@ -668,9 +703,7 @@ class CliFeatureTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             run_dir = next(output.iterdir())
-            memory = json.loads(
-                next(run_dir.rglob("*.memory.jsonl")).read_text(encoding="utf-8")
-            )
+            memory = read_jsonl(run_dir / "memory.jsonl")[0]
             corpus = json.loads(
                 (run_dir / "corpus.jsonl").read_text(encoding="utf-8")
             )
@@ -720,9 +753,7 @@ class CliFeatureTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             run_dir = next(output.iterdir())
-            memory = json.loads(
-                next(run_dir.rglob("*.memory.jsonl")).read_text(encoding="utf-8")
-            )
+            memory = read_jsonl(run_dir / "memory.jsonl")[0]
             corpus = json.loads(
                 (run_dir / "corpus.jsonl").read_text(encoding="utf-8")
             )
@@ -813,15 +844,12 @@ class CliFeatureTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             run_dir = next(output.iterdir())
-            memory_files = sorted(run_dir.rglob("*.memory.jsonl"))
+            memory_file = run_dir / "memory.jsonl"
             corpus_file = run_dir / "corpus.jsonl"
-            self.assertEqual(len(memory_files), 2)
+            self.assertTrue(memory_file.is_file())
             self.assertTrue(corpus_file.is_file())
             memory_records = {
-                json.loads(path.read_text(encoding="utf-8"))["session_id"]: json.loads(
-                    path.read_text(encoding="utf-8")
-                )
-                for path in memory_files
+                record["session_id"]: record for record in read_jsonl(memory_file)
             }
             corpus_records = {
                 json.loads(line)["session_id"]: json.loads(line)

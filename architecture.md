@@ -106,15 +106,16 @@ Each export creates one timestamped run folder directly under the configured out
 - `index.md` — root index grouped by project
 - `index.<product>.md` — one per-product index per exported product
 - `corpus.jsonl` — one flattened document per root session
+- `memory.jsonl` — one nested document per root session
 - one folder per project, named `<YYYY-MM-DD>_<project>_<hash12>`
 
 Session-scoped files are siblings sharing the session slug and live directly in the project folder:
 
 ```
 <run>/corpus.jsonl
+<run>/memory.jsonl
 <run>/<project_folder>/<session_slug>.transcript.md
 <run>/<project_folder>/<session_slug>.faithful.jsonl
-<run>/<project_folder>/<session_slug>.memory.jsonl
 ```
 
 The session slug keeps the `{date}_{slugified-label}_{short_id}` form. The date comes from the source file mtime in UTC, then the session timestamp, then a date in the filename, otherwise `unknown-date`. Project folders use the newest included session date, the basename of cwd or the first workspace root with Windows and POSIX separators normalized, and the first 12 hex digits of SHA-256 over the canonical key; a missing path becomes `no-project_<hash12>`. There is no date-only folder above the project folder and no per-session folder.
@@ -123,7 +124,7 @@ Each Markdown session file starts with YAML frontmatter containing its title,
 session ID, date, project, and source path when available; the H1 uses the
 session title from Codex's index, falling back to the session slug.
 
-The metadata records the effective run configuration, including the resolved source and its origin, the selected preset, and the resolved filters, so the real behavior is always traceable.
+The generated run folder is `<timestamp>_<label>`; the label defaults to the preset or product list and `--run-label` overrides it. The metadata records the effective run configuration, including the resolved source and its origin, the selected preset, the run label, and the resolved filters, so the real behavior is always traceable.
 Each JSONL record carries a `record_type`: `session_memory` records preserve events, messages, parts, usage, and nested `children` keyed by `parent_thread_id`; `corpus_document` records flatten root and child text into `text` and `content` fields. Canonical `response_item` records and mirrored `event_msg` records are deduplicated by role, timestamp, and normalized text so mixed-format sessions yield one message and one set of parts per turn. Sessions with no retained content do not produce `memory` or `corpus` artifacts and remain skipped in run metadata. A selected subagent whose parent is absent from the selection is emitted as a standalone record with `parent_unresolved: true`; it is not promoted to a root and does not aggregate unrelated sessions. `metadata.json` and the JSON export envelope list `artifacts` as paths relative to the run root and record which sessions contributed each product. `complete` resolves distinct policies per product, so the faithful source is untouched, `memory` retains developer events, and `corpus` excludes developer content and cleans user prompts by default.
 
 `--list-sessions` uses the same discovery and selection rules but only reads
