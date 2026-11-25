@@ -33,8 +33,8 @@ This separation avoids the classic bug where product identity and export policy 
 These are the real base output formats:
 
 - `transcript` — chronological Markdown transcript with tool activity and context
-- `memory` — raw structured JSONL for retrieval/debugging pipelines
-- `corpus` — normalized message JSONL for indexing and retrieval
+- `memory` — session-structured JSONL with nested subagent records
+- `corpus` — flattened corpus documents for indexing and retrieval
 - `faithful` — byte-for-byte copy of the original session JSONL
 
 A product is not “clean” or “raw” by default. Its behavior is defined by the runtime policy that is applied when it is exported.
@@ -43,20 +43,20 @@ A product is not “clean” or “raw” by default. Its behavior is defined by
 
 Presets are the user-facing export modes. They are recipes, not product identities.
 
-- `complete` — source JSONL + transcript + run-wide memory and corpus JSONL
+- `complete` — source JSONL + transcript + session-structured memory + flattened corpus
 - `source` — source-only lossless copy
 - `markdown` — transcript view
 - `conversation` — clean dialogue-only transcript; excludes developer text and tool activity by default
 - `prompts` — user prompts only
-- `memory` — raw retrieval/debugging events, includes developer records by default
-- `corpus` — normalized message documents; excludes developer text by default
+- `memory` — nested session records with events, messages, parts, and usage; includes developer records by default
+- `corpus` — flattened text documents for whole session trees; excludes developer text by default
 - `instructions` — developer instructions only
 
 `complete` demonstrates a preset with product-specific policy: the faithful
-source is copied unchanged, `memory` retains developer events, and `corpus`
-keeps normalized messages while excluding developer content and cleaning user
-prompts. These policies are declared per product, not applied as one global
-filter across the bundle.
+source is copied unchanged, `memory` retains developer events and nests
+subagents, and `corpus` aggregates flattened text while excluding developer
+content and cleaning user prompts. These policies are declared per product, not
+applied as one global filter across the bundle.
 
 The important rule is simple:
 
@@ -94,7 +94,7 @@ The exporter intentionally separates different kinds of output:
 
 - source-faithful output: original session copies and raw event data
 - human-readable output: transcript and cleaned dialogue views
-- retrieval-oriented output: memory and normalized message JSONL
+- retrieval-oriented output: session-structured memory and flattened corpus JSONL
 
 These are different uses, not different “types of product truth”.
 
@@ -105,31 +105,32 @@ Each export creates one timestamped run folder directly under the configured out
 - `metadata.json` — machine-readable run summary (schema version 8)
 - `index.md` — root index grouped by project
 - `index.<product>.md` — one per-product index per exported product
-- one folder per session, named after the session slug
+- `corpus.jsonl` — one flattened document per root session
+- one folder per project, named `<YYYY-MM-DD>_<project>_<hash12>`
 
-Session-scoped files are siblings sharing the session slug. The raw memory and normalized corpus are run-wide files at the run root:
+Session-scoped files are siblings sharing the session slug and live directly in the project folder:
 
 ```
-<run>/<session_slug>/
-  <session_slug>.transcript.md
-  <session_slug>.faithful.jsonl
-<run>/memory.jsonl
 <run>/corpus.jsonl
+<run>/<project_folder>/<session_slug>.transcript.md
+<run>/<project_folder>/<session_slug>.faithful.jsonl
+<run>/<project_folder>/<session_slug>.memory.jsonl
 ```
 
-The session slug keeps the `{date}_{slugified-label}_{short_id}` form. Project information is metadata-only and used for grouping in the root index.
+The session slug keeps the `{date}_{slugified-label}_{short_id}` form. The date comes from the source file mtime in UTC, then the session timestamp, then a date in the filename, otherwise `unknown-date`. Project folders use the newest included session date, the basename of cwd or the first workspace root with Windows and POSIX separators normalized, and the first 12 hex digits of SHA-256 over the canonical key; a missing path becomes `no-project_<hash12>`. There is no date-only folder above the project folder and no per-session folder.
 
 Each Markdown session file starts with YAML frontmatter containing its title,
 session ID, date, project, and source path when available; the H1 uses the
 session title from Codex's index, falling back to the session slug.
 
 The metadata records the effective run configuration, including the resolved source and its origin, the selected preset, and the resolved filters, so the real behavior is always traceable.
-Each JSONL record carries `session`, `session_id`, and `session_title`; `metadata.json` lists run-level files in `product_artifacts` and records which sessions contributed each product. `complete` resolves distinct policies per product, so the faithful source is untouched, `memory` retains developer events, and `corpus` excludes developer content and cleans user prompts by default.
+Each JSONL record carries a `record_type`: `session_memory` records preserve events, messages, parts, usage, and nested `children` keyed by `parent_thread_id`; `corpus_document` records flatten root and child text into `text` and `content` fields. Canonical `response_item` records and mirrored `event_msg` records are deduplicated by role, timestamp, and normalized text so mixed-format sessions yield one message and one set of parts per turn. Sessions with no retained content do not produce `memory` or `corpus` artifacts and remain skipped in run metadata. A selected subagent whose parent is absent from the selection is emitted as a standalone record with `parent_unresolved: true`; it is not promoted to a root and does not aggregate unrelated sessions. `metadata.json` and the JSON export envelope list `artifacts` as paths relative to the run root and record which sessions contributed each product. `complete` resolves distinct policies per product, so the faithful source is untouched, `memory` retains developer events, and `corpus` excludes developer content and cleans user prompts by default.
 
 `--list-sessions` uses the same discovery and selection rules but only reads
 session metadata; it creates no run directory or export files. `--recent-turns`
-trims events within each session, while `--last` and `--sessions` select whole
-session files. The active `recent_turns` value and each filtered session's
+trims events, messages, and parts within each session using the same retained
+user-turn window, while `--last` and `--sessions` select whole session files.
+The active `recent_turns` value and each filtered session's
 `source_message_count` are recorded in run metadata.
 
 Transcripts are currently one file per session and are not chunked. If chunking
@@ -138,7 +139,7 @@ splitting at arbitrary byte offsets.
 
 ## Layout policy
 
-The exporter has a single on-disk layout: one timestamped run folder per invocation, with one sibling-file folder per session. The former `--flat` layout and its `layout` INI key have been removed. The run folder is always created directly under `--output`, which keeps launcher-style directory detection working.
+The exporter has a single on-disk layout: one timestamped run folder per invocation, with one folder per project holding sibling product files. The former `--flat` layout and its `layout` INI key have been removed. The run folder is always created directly under `--output`, which keeps launcher-style directory detection working.
 
 ## Machine-readable output and exit codes
 

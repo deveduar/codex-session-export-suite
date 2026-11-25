@@ -1,6 +1,6 @@
 # Codex Session Export Suite
 
-Export local Codex sessions with control over fidelity and format. A single CLI provides byte-for-byte source copies, titled Markdown transcripts, run-wide event JSONL, and a normalized message corpus.
+Export local Codex sessions with control over fidelity and format. A single CLI provides byte-for-byte source copies, titled Markdown transcripts, session-structured memory JSONL with nested subagents, and flattened corpus documents.
 
 ## Requirements
 
@@ -13,12 +13,12 @@ Export local Codex sessions with control over fidelity and format. A single CLI 
 | Preset | Use it when you want... |
 |---|---|
 | `source` | A byte-for-byte backup |
-| `complete` | Source copy, full transcript, event memory, and normalized corpus |
+| `complete` | Source copy, full transcript, nested session memory, and flattened corpus documents |
 | `markdown` | A chronological human-readable log |
 | `conversation` | Clean dialogue only |
 | `prompts` | Just the human prompts |
-| `memory` | One run-wide JSONL of raw session events |
-| `corpus` | One run-wide JSONL of normalized messages |
+| `memory` | One JSONL record per root session with nested subagent records |
+| `corpus` | One flattened text document per root session |
 | `instructions` | Only developer instructions 
 
 ## Quick start
@@ -31,10 +31,10 @@ turn filtering and faithful source copies from derived JSONL.
 # No preset in the CLI or INI means the transcript product for all sessions.
 python codexexport.py
 
-# The broad bundle includes faithful source, transcript, event memory, corpus.
+# The broad bundle includes faithful source, transcript, nested memory, corpus.
 python codexexport.py --preset complete
 
-# Keep only original source files, or export one run-wide derived JSONL.
+# Keep only original source files, or export one derived JSONL product.
 python codexexport.py --preset source
 python codexexport.py --preset memory
 python codexexport.py --preset corpus
@@ -68,8 +68,8 @@ python codexexport.py /path/to/.codex --config ./codex_export.ini --preset compl
 
 Replace `python` with the interpreter command used by your environment (for
 example, `python3` or `py`). `complete` keeps the original source per session;
-`memory` and `corpus` are derived run-wide JSONL files, not faithful source
-archives.
+`memory` and `corpus` are distinct derived JSONL products written beside the
+other session files in each project folder, not faithful source archives.
 
 ## Input and output paths
 
@@ -82,23 +82,28 @@ configured destination, which defaults to `./exports`.
 
 ## Output layout
 
-Every run creates one timestamped folder directly under the output directory. Run-wide JSONL artifacts live at its root; each session folder contains its faithful source copy and any Markdown transcript:
+Every run creates one timestamped folder directly under the output directory. Session artifacts are grouped directly in a project folder named `<YYYY-MM-DD>_<project>_<hash12>`; the date is the newest included session in that project and the suffix is the first 12 hex digits of SHA-256 over the canonical cwd/workspace-root key. A missing path uses `no-project_<hash12>`. Windows drive paths and their `/mnt/<drive>` WSL forms hash to the same ID.
 
 ```
 exports/
-  2026-11-12_19-28-43_complete/
+  20261112T192843Z_complete/
     index.md                     # root index, grouped by project
     metadata.json                # machine-readable run metadata
     index.memory.md              # per-product session index
     index.corpus.md              # per-product session index
-    memory.jsonl                 # all raw events, tagged with session id/title
-    corpus.jsonl                 # all normalized messages, tagged with session id/title
-    2026-10-27_example_01a17f02/
+    corpus.jsonl                 # one flat document per root session
+    2026-10-27_example-project_a289bbc5b59c/
       2026-10-27_example_01a17f02.faithful.jsonl
       2026-10-27_example_01a17f02.transcript.md
+      2026-10-27_example_01a17f02.memory.jsonl
+    2026-10-26_no-project_5f1c0aa9b2d3/
+      2026-10-26_session_02b3c4d5.faithful.jsonl
+      2026-10-26_session_02b3c4d5.transcript.md
+      2026-10-26_session_02b3c4d5.memory.jsonl
 ```
 
-`memory.jsonl` and `corpus.jsonl` are each one file per run, not one file per session. Every line includes the session slug, ID, and title. `source` remains one byte-faithful original JSONL file per session. Markdown transcripts include YAML frontmatter and a session-title H1. The old `archive` and `rag` preset/product names are removed; use `complete` and `corpus` respectively.
+There is no date-only folder above the project folder and no per-session folder. Each session file name keeps the `{date}_{slug}_{short-id}` shape, where the date comes from the source JSONL mtime in UTC, then the session timestamp, then a filename date, otherwise `unknown-date`. `memory` writes one root record per root session and nests subagent sessions as children; nested children do not receive their own memory file. `corpus` writes one `corpus.jsonl` file at the run root with one flattened document per root session, including child text. `source` remains one byte-faithful original JSONL file per session. Markdown transcripts include YAML frontmatter and a session-title H1. Sessions with no extractable content do not receive empty `memory` or `corpus` lines; they remain listed as skipped in run metadata. A selected subagent whose parent is not selected is emitted as its own record with `parent_unresolved: true` instead of being promoted to a root; it is not treated as a parent of unrelated sessions. The old `archive` and `rag` preset/product names are removed; use `complete` and `corpus` respectively.
+
 
 `--check-updates` only compares against runs under the selected output directory.
 
@@ -117,7 +122,7 @@ recorded in `metadata.json` when the option is active.
 
 `--json` prints a single JSON object on stdout (and implies `--quiet`). `-q` / `--quiet` suppresses per-file and informational lines but keeps errors and a final summary. Errors go to stderr.
 
-`--list-sessions --json` includes canonical `created_at` and `updated_at` timestamps in UTC ISO 8601 (`Z`) form, plus a `revision` taken from the source JSONL file's `mtime_ns`. `started_at` remains the original source timestamp. The revision is a lightweight comparison token, not a timestamp for display. Export bundles separately record source size, mtime, and SHA-256 fingerprints for Codex's own update comparison; the listing token does not change that metadata. Session names use the source JSONL file's last-modified date in UTC; run folders use UTC `YYYYMMDDTHHMMSSZ` stamps.
+`--list-sessions --json` includes canonical `created_at` and `updated_at` timestamps in UTC ISO 8601 (`Z`) form, plus a `revision` taken from the source JSONL file's `mtime_ns`. `started_at` remains the original source timestamp. The revision is a lightweight comparison token, not a timestamp for display. Export bundles separately record source size, mtime, and SHA-256 fingerprints for Codex's own update comparison; the listing token does not change that metadata. Session names use the source JSONL file's last-modified date in UTC; run folders use UTC `YYYYMMDDTHHMMSSZ` stamps. Export envelopes and `metadata.json` list per-product `artifacts` as paths relative to the run root.
 
 Exit codes: `0` success, `1` configuration or source error, `2` no data (source valid but no sessions matched).
  
@@ -127,13 +132,13 @@ Products are output formats. Presets are named recipes that choose a product set
 
 | Preset | Products and filtering | Data retention |
 |---|---|---|
-| `complete` | Source JSONL + transcript + memory JSONL + corpus JSONL | Lossless source plus derived views |
+| `complete` | Source JSONL + transcript + nested memory JSONL + flattened corpus JSONL | Lossless source plus distinct derived views |
 | `source` | Source JSONL only | Lossless |
 | `markdown` | Human-readable transcript | Derived view |
 | `conversation` | Clean dialogue | Derived, excludes tool activity and developer text by default |
 | `prompts` | User prompts only | Derived |
-| `memory` | Run-wide raw structured events | Derived, includes developer records by default |
-| `corpus` | Run-wide normalized message documents | Derived, excludes developer text by default |
+| `memory` | Session-structured events, messages, parts, usage, and nested subagents | Derived, includes developer records by default |
+| `corpus` | One flattened corpus document per root session | Derived, excludes developer text by default |
 | `instructions` | Developer instructions only | Derived |
 
 For the full behavior matrix, cleanup rules, and architecture notes, see [architecture.md](architecture.md).

@@ -109,6 +109,29 @@ class ResolvedProduct(ProductSpec):
             selected.append(filtered)
         return selected
 
+    def select_messages(self, messages: List[dict]) -> List[dict]:
+        selected = []
+        for message in messages:
+            role = message.get("role")
+            if self.message_only and role not in ("user", "assistant", "developer"):
+                continue
+            if not self.allows_role(role):
+                continue
+
+            filtered = dict(message)
+            text = str(filtered.get("text") or "")
+            if self.clean_user_prompts and role == "user":
+                text = extract_user_prompt(text)
+                if not text:
+                    continue
+            if self.strip_boilerplate and role == "user":
+                text = extract_user_prompt(text)
+                if not text:
+                    continue
+            filtered["text"] = text
+            selected.append(filtered)
+        return selected
+
     def apply(self, messages: List[dict]) -> List[dict]:
         result = []
         for msg in messages:
@@ -213,13 +236,13 @@ transcript = ProductSpec(
 
 memory = ProductSpec(
     name="memory",
-    description="Raw structured JSONL for retrieval/debugging: message, tool, context, and output events in source order",
-    kind="raw_jsonl",
+    description="Session-structured JSONL with nested subagent records, preserving events, messages, parts, and token usage",
+    kind="session_jsonl",
 )
 
 corpus = ProductSpec(
     name="corpus",
-    description="Run-wide normalized JSONL message corpus for indexing and retrieval",
+    description="Flattened corpus JSONL with one aggregated document per root session and its child text",
     kind="corpus_jsonl",
 )
 
@@ -236,12 +259,12 @@ PRODUCTS: Dict[str, ProductSpec] = {
     "faithful": faithful,
 }
 
-RUN_LEVEL_PRODUCTS = frozenset({"memory", "corpus"})
+RUN_LEVEL_PRODUCTS = frozenset()
 
 PRESETS: Dict[str, Preset] = {
     "complete": Preset(
         "complete",
-        "Source-faithful sessions, full transcripts, raw event memory, and a normalized message corpus",
+        "Source-faithful sessions, full transcripts, session-structured memory with nested subagents, and flattened corpus documents",
         products=["faithful", "transcript", "memory", "corpus"],
         product_options={
             "memory": {"developer": "include"},
@@ -284,13 +307,13 @@ PRESETS: Dict[str, Preset] = {
     ),
     "memory": Preset(
         "memory",
-        "Lossy: raw structured message, tool, and context events for retrieval/debugging",
+        "Session-structured events, messages, parts, and usage with nested subagent records",
         products=["memory"],
         developer="include",
     ),
     "corpus": Preset(
         "corpus",
-        "Lossy: normalized message documents for indexing, embeddings, and retrieval",
+        "Flattened corpus documents with one aggregated text record per root session",
         products=["corpus"],
         product_options={
             "corpus": {

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .config import (
     ConfigError,
@@ -22,6 +23,7 @@ from .config import (
 )
 from .extract import (
     extract_session_events_from_jsonl,
+    extract_session_messages_and_parts,
     read_session_metadata,
     retain_recent_turns,
 )
@@ -35,12 +37,13 @@ from .organize import (
     next_run_dir,
     product_filename,
     run_label,
-    session_folder_name,
     summarize_token_usage,
     write_indexes,
     write_metadata,
 )
 from .output import (
+    build_corpus_document,
+    build_memory_record,
     format_jsonl_memory,
     format_jsonl_corpus,
     format_markdown_transcript,
@@ -53,7 +56,6 @@ from .products import (
     list_presets,
     list_products,
     resolve_preset,
-    RUN_LEVEL_PRODUCTS,
 )
 
 
@@ -414,6 +416,161 @@ def product_skip_reason(product_name: str) -> str:
     return "no extractable events"
 
 
+def _apply_truncation(events: List[dict], limit: Optional[int]) -> List[dict]:
+    filtered = [dict(event) for event in events]
+    if limit:
+        for event in filtered:
+            for key in ("text", "arguments", "output"):
+                value = event.get(key)
+                if isinstance(value, str) and len(value) > limit:
+                    event[key] = value[:limit] + "..."
+    return filtered
+
+
+def _truncate_text_payloads(items: List[dict], limit: Optional[int]) -> List[dict]:
+    result = [dict(item) for item in items]
+    if limit:
+        for item in result:
+            text = item.get("text")
+            if isinstance(text, str) and len(text) > limit:
+                item["text"] = text[:limit] + "..."
+    return result
+
+
+def _session_tree(
+    records: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+    by_id = {
+        str(record.get("id")): record
+        for record in records
+        if record.get("id")
+    }
+    children_by_parent: Dict[str, List[Dict[str, Any]]] = {}
+    for record in records:
+        parent_id = str(record.get("parent_thread_id") or "")
+        session_id = str(record.get("id") or "")
+        if parent_id and parent_id in by_id and parent_id != session_id:
+            children_by_parent.setdefault(parent_id, []).append(record)
+
+    child_ids = {
+        id(child)
+        for children in children_by_parent.values()
+        for child in children
+    }
+    document_sessions: List[Dict[str, Any]] = []
+    for record in records:
+        if id(record) in child_ids:
+            continue
+        parent_id = str(record.get("parent_thread_id") or "")
+        session_id = str(record.get("id") or "")
+        if parent_id and parent_id != session_id and parent_id not in by_id:
+            record["parent_unresolved"] = True
+        document_sessions.append(record)
+    return document_sessions, children_by_parent
+
+
+def _session_descendants(
+    record: Dict[str, Any],
+    children_by_parent: Dict[str, List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    seen = {str(record.get("id") or "")}
+    queue = list(children_by_parent.get(str(record.get("id") or ""), []))
+    while queue:
+        child = queue.pop(0)
+        child_id = str(child.get("id") or "")
+        if child_id in seen:
+            continue
+        seen.add(child_id)
+        result.append(child)
+        queue.extend(children_by_parent.get(child_id, []))
+    return result
+
+
+def _build_memory_tree(
+    record: Dict[str, Any],
+    children_by_parent: Dict[str, List[Dict[str, Any]]],
+    structured_by_session: Dict[int, Dict[str, Any]],
+    product_name: str,
+    truncate_chars: Optional[int],
+    seen: Set[str],
+) -> Dict[str, Any]:
+    session_id = str(record.get("id") or "")
+    seen.add(session_id)
+    data = structured_by_session[id(record)]["products"].get(product_name) or {
+        "events": [],
+        "messages": [],
+        "parts": [],
+    }
+    children = []
+    for child in children_by_parent.get(session_id, []):
+        child_id = str(child.get("id") or "")
+        if child_id in seen:
+            continue
+        children.append(
+            _build_memory_tree(
+                child,
+                children_by_parent,
+                structured_by_session,
+                product_name,
+                truncate_chars,
+                seen,
+            )
+        )
+    return build_memory_record(
+        record,
+        data["events"],
+        data["messages"],
+        data["parts"],
+        record.get("usage") or {},
+        children=children,
+        truncate_chars=truncate_chars,
+    )
+
+
+def _register_output(
+    record: Dict[str, Any],
+    product_name: str,
+    output_file: Path,
+    run_dir: Path,
+    artifact_paths: Dict[str, List[str]],
+    written_output_paths: Set[str],
+    dry_run: bool,
+) -> None:
+    relative = output_file.relative_to(run_dir).as_posix()
+    record["outputs"][product_name] = relative
+    paths = artifact_paths.setdefault(product_name, [])
+    if relative not in paths:
+        paths.append(relative)
+    if not dry_run:
+        written_output_paths.add(relative)
+
+
+def process_structured_product(
+    product_name: str,
+    record: Dict[str, Any],
+    output_file: Path,
+    quiet: bool = False,
+    dry_run: bool = False,
+) -> None:
+    if dry_run:
+        if not quiet:
+            print(f"[*] {product_name}: -> {output_file}")
+        return
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    content = (
+        format_jsonl_memory(record)
+        if product_name == "memory"
+        else format_jsonl_corpus(record)
+    )
+    with open(output_file, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    if not quiet:
+        label = "Session memory" if product_name == "memory" else "Flattened corpus"
+        print(f"[+] {label} exported: {output_file.name}")
+
+
 def process_session(
     file_path: Path,
     events: List[dict],
@@ -441,14 +598,7 @@ def process_session(
             print(f"[+] Source JSONL copied: {output_file.name}")
         return
 
-    filtered_events = [dict(event) for event in events]
-    limit = product_config.truncate_chars
-    if limit:
-        for event in filtered_events:
-            for key in ("text", "arguments", "output"):
-                value = event.get(key)
-                if isinstance(value, str) and len(value) > limit:
-                    event[key] = value[:limit] + "..."
+    filtered_events = _apply_truncation(events, product_config.truncate_chars)
 
     if product_name == "transcript":
         content = format_markdown_activity_transcript(
@@ -459,24 +609,6 @@ def process_session(
             session_metadata=session_metadata,
         )
         label = "Markdown transcript"
-    elif product_name == "memory":
-        metadata = session_metadata or {}
-        content = format_jsonl_memory(
-            filtered_events,
-            display_name,
-            session_id=str(metadata.get("id") or "") or None,
-            session_title=str(metadata.get("thread_name") or display_name),
-        )
-        label = "Structured retrieval JSONL"
-    elif product_name == "corpus":
-        metadata = session_metadata or {}
-        content = format_jsonl_corpus(
-            [event for event in filtered_events if event.get("kind") == "message"],
-            display_name,
-            session_id=str(metadata.get("id") or "") or None,
-            session_title=str(metadata.get("thread_name") or display_name),
-        )
-        label = "Normalized message corpus JSONL"
     else:
         content = format_markdown_transcript(
             filtered_events,
@@ -949,18 +1081,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     codex_root = find_codex_root(codex_path)
     session_index = load_session_index(codex_root)
-    session_records = []
-    written_output_paths = set()
-
-    for index, file_path in enumerate(jsonl_files, 1):
-        if not quiet:
-            print(f"[{index}/{len(jsonl_files)}] Processing: {file_path.name}")
+    prepared_sessions = []
+    for file_path in jsonl_files:
         record = build_session_record(
             file_path,
             codex_root,
             session_index,
             include_fingerprint=run_dir is not None and not args.dry_run,
         )
+        prepared_sessions.append((file_path, record))
+
+    project_dates: Dict[str, str] = {}
+    for _file_path, record in prepared_sessions:
+        key = str(record.get("project_key") or "no-project")
+        date = str(record.get("updated_at") or record.get("date") or "")[:10]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            continue
+        if key not in project_dates or date > project_dates[key]:
+            project_dates[key] = date
+    for _file_path, record in prepared_sessions:
+        key = str(record.get("project_key") or "no-project")
+        date = project_dates.get(key, "unknown-date")
+        record["project_date"] = date
+        record["project_folder"] = f"{date}_{record['project_slug']}"
+
+    session_records = []
+    written_output_paths: Set[str] = set()
+    artifact_paths: Dict[str, List[str]] = {name: [] for name in product_names}
+    structured_by_session: Dict[int, Dict[str, Any]] = {}
+    product_config_by_name = {config.name: config for config in product_configs}
+    wants_structured = "memory" in product_names or "corpus" in product_names
+
+    for index, (file_path, record) in enumerate(prepared_sessions, 1):
+        if not quiet:
+            print(f"[{index}/{len(prepared_sessions)}] Processing: {file_path.name}")
         all_events = extract_session_events_from_jsonl(file_path)
         all_messages = [event for event in all_events if event.get("kind") == "message"]
         events = retain_recent_turns(all_events, recent_turns)
@@ -988,10 +1142,70 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"[*] No extractable conversation text in {file_path.name}")
 
         display_name = str(record["slug"])
-        session_dir = run_dir / session_folder_name(display_name)
+        project_dir = run_dir / str(record["project_folder"])
+        structure = (
+            extract_session_messages_and_parts(file_path) if wants_structured else None
+        )
+        if structure is not None and recent_turns is not None:
+            retained_ordinals = {event.get("ordinal") for event in events}
+            structure = {
+                "messages": [
+                    message
+                    for message in structure["messages"]
+                    if message.get("ordinal") in retained_ordinals
+                ],
+                "parts": [
+                    part
+                    for part in structure["parts"]
+                    if part.get("message_ordinal") in retained_ordinals
+                ],
+            }
+        structured_entry: Dict[str, Any] = {
+            "file_path": file_path,
+            "record": record,
+            "events": events,
+            "structure": structure,
+            "products": {},
+        }
+        structured_by_session[id(record)] = structured_entry
+
         for product_config in product_configs:
             product_name = product_config.name
             product_events = product_config.select_events(events)
+
+            if product_name in ("memory", "corpus"):
+                selected_messages = product_config.select_messages(
+                    (structure or {}).get("messages", [])
+                )
+                selected_ordinals = {
+                    message.get("ordinal") for message in selected_messages
+                }
+                selected_parts = [
+                    part
+                    for part in (structure or {}).get("parts", [])
+                    if part.get("message_ordinal") in selected_ordinals
+                ]
+                if not (product_events or selected_messages or selected_parts):
+                    record["skipped_products"].append(product_name)
+                    record["skipped_product_reasons"][product_name] = product_skip_reason(
+                        product_name
+                    )
+                    continue
+
+                structured_entry["products"][product_name] = {
+                    "config": product_config,
+                    "events": _apply_truncation(
+                        product_events, product_config.truncate_chars
+                    ),
+                    "messages": _truncate_text_payloads(
+                        selected_messages, product_config.truncate_chars
+                    ),
+                    "parts": _truncate_text_payloads(
+                        selected_parts, product_config.truncate_chars
+                    ),
+                }
+                continue
+
             has_product_data = bool(product_events) or product_name == "faithful"
             if not has_product_data:
                 record["skipped_products"].append(product_name)
@@ -1003,11 +1217,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             record["product_items"][product_name] = (
                 1 if product_name == "faithful" else len(product_events)
             )
-
-            if product_name in RUN_LEVEL_PRODUCTS:
-                output_file = run_dir / f"{product_name}.jsonl"
-            else:
-                output_file = session_dir / product_filename(display_name, product_name)
+            output_file = project_dir / product_filename(display_name, product_name)
 
             process_session(
                 file_path,
@@ -1017,22 +1227,138 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 display_name,
                 no_timestamps=no_timestamps,
                 dry_run=args.dry_run,
-                quiet=quiet or product_name in RUN_LEVEL_PRODUCTS,
-                append_output=product_name in RUN_LEVEL_PRODUCTS,
+                quiet=quiet,
                 session_metadata=record,
             )
+            _register_output(
+                record,
+                product_name,
+                output_file,
+                run_dir,
+                artifact_paths,
+                written_output_paths,
+                args.dry_run,
+            )
 
-            record["outputs"][product_name] = output_file.relative_to(
-                run_dir
-            ).as_posix()
+        session_records.append(record)
 
-            if not args.dry_run:
-                written_output_paths.add(output_file.relative_to(run_dir).as_posix())
+    if wants_structured:
+        document_sessions, children_by_parent = _session_tree(session_records)
+        corpus_documents: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+        for document_session in document_sessions:
+            members = [document_session] + _session_descendants(
+                document_session, children_by_parent
+            )
+            for product_name in ("memory", "corpus"):
+                if product_name not in product_names:
+                    continue
 
-        if not record["outputs"]:
+                contributing = []
+                for member in members:
+                    data = structured_by_session[id(member)]["products"].get(product_name)
+                    if data and (
+                        data.get("events") or data.get("messages") or data.get("parts")
+                    ):
+                        contributing.append((member, data))
+                if not contributing:
+                    continue
+
+                config = product_config_by_name[product_name]
+                session_data = next(
+                    (
+                        data
+                        for member, data in contributing
+                        if id(member) == id(document_session)
+                    ),
+                    None,
+                ) or {"events": [], "messages": [], "parts": []}
+                child_data = [
+                    (member, data)
+                    for member, data in contributing
+                    if id(member) != id(document_session)
+                ]
+
+                if product_name == "memory":
+                    document: Dict[str, Any] = _build_memory_tree(
+                        document_session,
+                        children_by_parent,
+                        structured_by_session,
+                        product_name,
+                        config.truncate_chars,
+                        set(),
+                    )
+                else:
+                    corpus_members = [
+                        {
+                            "session": document_session,
+                            "messages": session_data["messages"],
+                        }
+                    ]
+                    corpus_members.extend(
+                        {"session": member, "messages": data["messages"]}
+                        for member, data in child_data
+                    )
+                    document = build_corpus_document(
+                        document_session,
+                        corpus_members,
+                        truncate_chars=config.truncate_chars,
+                    )
+                if product_name == "corpus" and not (
+                    document.get("text") or document.get("content")
+                ):
+                    continue
+
+                if product_name == "corpus":
+                    output_file = run_dir / "corpus.jsonl"
+                    corpus_documents.append((document_session, document))
+                else:
+                    output_file = (
+                        run_dir
+                        / str(document_session["project_folder"])
+                        / product_filename(str(document_session["slug"]), product_name)
+                    )
+                    process_structured_product(
+                        product_name,
+                        document,
+                        output_file,
+                        quiet=quiet,
+                        dry_run=args.dry_run,
+                    )
+                _register_output(
+                    document_session,
+                    product_name,
+                    output_file,
+                    run_dir,
+                    artifact_paths,
+                    written_output_paths,
+                    args.dry_run,
+                )
+                document_session["product_items"][product_name] = 1
+                for record in [document_session] + [member for member, _ in child_data]:
+                    if product_name in record.get("skipped_products", []):
+                        record["skipped_products"].remove(product_name)
+                        record["skipped_product_reasons"].pop(product_name, None)
+                    if record is not document_session:
+                        record["nested_in"] = document_session.get("id")
+
+        if corpus_documents:
+            corpus_file = run_dir / "corpus.jsonl"
+            if args.dry_run:
+                if not quiet:
+                    print(f"[*] corpus: -> {corpus_file}")
+            else:
+                corpus_file.parent.mkdir(parents=True, exist_ok=True)
+                with corpus_file.open("w", encoding="utf-8") as handle:
+                    for _session, document in corpus_documents:
+                        handle.write(format_jsonl_corpus(document))
+                        handle.write("\n")
+                if not quiet:
+                    print(f"[+] Flattened corpus exported: {corpus_file.name}")
+
+    for record in session_records:
+        if not record.get("outputs") and not record.get("nested_in"):
             record["skipped"] = True
             record["reason"] = "no extractable conversation text or source product selected"
-        session_records.append(record)
 
     files_written = len(written_output_paths)
     product_counts = {
@@ -1067,11 +1393,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "timestamps": not no_timestamps,
         "preset": selected_preset,
         "products": product_names,
-        "product_artifacts": {
-            product_name: f"{product_name}.jsonl"
-            for product_name in product_names
-            if product_name in RUN_LEVEL_PRODUCTS
-            and f"{product_name}.jsonl" in written_output_paths
+        "product_artifacts": {},
+        "artifacts": {
+            product_name: sorted(paths)
+            for product_name, paths in artifact_paths.items()
+            if paths
         },
         "resolved_products": [
             {
@@ -1133,17 +1459,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if not quiet:
             print(f"[*] Would write: {run_dir / 'metadata.json'}")
             print(f"[*] Would write: {run_dir / 'index.md'}")
-            for product_name in RUN_LEVEL_PRODUCTS:
-                if product_name in product_names and any(
-                    product_name in record.get("outputs", {})
-                    for record in session_records
-                ):
-                    print(f"[*] Would write: {run_dir / f'{product_name}.jsonl'}")
             for product_name in product_names:
-                if any(
-                    product_name in record.get("outputs", {})
-                    for record in session_records
-                ):
+                paths = sorted(artifact_paths.get(product_name, []))
+                for relative in paths:
+                    print(f"[*] Would write: {run_dir / relative}")
+                if paths:
                     print(f"[*] Would write: {run_dir / f'index.{product_name}.md'}")
     else:
         metadata_path = write_metadata(run_dir, metadata)
@@ -1170,6 +1490,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 },
                 "sessions_found": len(jsonl_files),
                 "files_written": files_written,
+                "products": product_names,
+                "product_counts": metadata["counts"]["product_counts"],
+                "artifacts": metadata["artifacts"],
             }
         )
         return EXIT_OK

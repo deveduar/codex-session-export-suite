@@ -11,14 +11,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .extract import read_session_metadata
-from .products import RUN_LEVEL_PRODUCTS
 
 
 PRODUCT_TITLES = {
     "transcript": "Transcript with Tool Activity",
     "conversation": "Conversation Only",
-    "memory": "Raw Retrieval Events",
-    "corpus": "Normalized Message Corpus",
+    "memory": "Session Memory with Nested Subagents",
+    "corpus": "Flattened Corpus Documents",
     "instructions": "Developer Instructions",
     "faithful": "Source JSONL",
 }
@@ -236,16 +235,27 @@ def project_from_cwd(cwd: Optional[str]) -> Optional[str]:
     return name or None
 
 
+def project_hash(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+
+
 def project_identity(metadata: Dict[str, Any]) -> Dict[str, str]:
-    """Build a stable project folder name from cwd or a workspace root."""
+    """Build a stable project folder identity from cwd or a workspace root."""
     roots = metadata.get("workspace_roots") or []
     path = metadata.get("cwd") or (roots[0] if roots else None)
+    missing_key = "no-project"
+    missing = {
+        "project": missing_key,
+        "project_key": missing_key,
+        "project_id": project_hash(missing_key),
+        "project_slug": f"{missing_key}_{project_hash(missing_key)}",
+    }
     if not path:
-        return {"project": "unknown", "project_key": "unknown", "project_slug": "unknown"}
+        return missing
 
     normalized = re.sub(r"/+", "/", str(path).replace("\\", "/")).rstrip("/")
     if not normalized:
-        normalized = str(path)
+        return missing
     windows_drive = re.match(r"^([A-Za-z]):/(.*)$", normalized)
     wsl_drive = re.match(r"^/mnt/([A-Za-z])/(.*)$", normalized, flags=re.IGNORECASE)
     if windows_drive:
@@ -254,12 +264,14 @@ def project_identity(metadata: Dict[str, Any]) -> Dict[str, str]:
         key = f"{wsl_drive.group(1)}:/{wsl_drive.group(2)}".casefold()
     else:
         key = normalized.casefold() if os.name == "nt" else normalized
-    name = project_from_cwd(normalized) or "project"
-    suffix = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+    name = project_from_cwd(normalized) or "no-project"
+    slug = slugify(name, 48) or "no-project"
+    project_id = project_hash(key)
     return {
         "project": name,
         "project_key": key,
-        "project_slug": f"{slugify(name, 48)}-{suffix}",
+        "project_id": project_id,
+        "project_slug": f"{slug}_{project_id}",
     }
 
 
@@ -402,6 +414,7 @@ def build_session_record(
         "thread_name": identity["thread_name"],
         "project": identity["project"],
         "project_key": identity["project_key"],
+        "project_id": identity["project_id"],
         "project_slug": identity["project_slug"],
         "cwd": metadata.get("cwd"),
         "workspace_roots": metadata.get("workspace_roots") or [],
@@ -457,11 +470,6 @@ def create_run_dir(output_dir: Path, label: str, now: datetime) -> Path:
             return run_dir
         except FileExistsError:
             continue
-
-
-def session_folder_name(slug: str) -> str:
-    """Return the per-session bundle folder name for a session slug."""
-    return slug
 
 
 def product_filename(slug: str, product_name: str) -> str:
@@ -630,8 +638,6 @@ def write_product_index(
         f"- Run: `{run_id}`",
         f"- Sessions: {len(product_sessions)} of {len(sessions)}",
     ]
-    if product_name in RUN_LEVEL_PRODUCTS:
-        lines.append("- Artifact: run-wide JSONL; each listed session contributes records")
     if omitted:
         lines.append(f"- Omitted: {omitted} sessions with no usable content")
     lines.extend(
@@ -842,7 +848,7 @@ def write_root_index(
     project_groups: Dict[str, List[Dict[str, Any]]] = {}
     for session in sessions:
         if session.get("outputs"):
-            project_groups.setdefault(session.get("project_slug") or "unknown", []).append(session)
+            project_groups.setdefault(session.get("project_slug") or "no-project", []).append(session)
     if project_groups:
         lines.extend(["", "## Sessions by project"])
         for project_slug, project_sessions in sorted(project_groups.items()):

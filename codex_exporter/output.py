@@ -166,81 +166,117 @@ def format_markdown_activity_transcript(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def format_jsonl_memory(
+def _truncated_copy(payload: Dict[str, Any], limit: Optional[int]) -> Dict[str, Any]:
+    result = dict(payload)
+    if not limit:
+        return result
+    text = result.get("text")
+    if isinstance(text, str) and len(text) > limit:
+        result["text"] = text[:limit] + "..."
+    return result
+
+
+def build_memory_record(
+    session: Dict[str, Any],
     events: List[dict],
-    session_name: str,
-    session_id: Optional[str] = None,
-    session_title: Optional[str] = None,
-) -> str:
-    """Format messages and tool activity as structured JSONL for raw retrieval/debugging."""
-    lines = []
-    fields = (
-        "kind",
-        "role",
-        "timestamp",
-        "turn_id",
-        "ordinal",
-        "tool",
-        "call_id",
-        "event_id",
-        "status",
-        "activity",
-        "text",
-        "arguments",
-        "output",
-        "details",
-    )
-    for event in events:
-        entry = {
-            "schema_version": 1,
-            "session": session_name,
-            "type": event.get("kind", ""),
-        }
-        if session_id:
-            entry["session_id"] = session_id
-        if session_title:
-            entry["session_title"] = session_title
-        for field in fields[1:]:
-            value = event.get(field)
-            if value not in (None, "", [], {}):
-                entry[field] = value
-        lines.append(json.dumps(entry, ensure_ascii=False))
-    return "\n".join(lines)
-
-
-def format_jsonl_corpus(
     messages: List[dict],
-    session_name: str,
-    session_id: Optional[str] = None,
-    session_title: Optional[str] = None,
-) -> str:
-    """Format normalized message records for the run-wide JSONL corpus.
+    parts: List[dict],
+    usage: Dict[str, Any],
+    children: Optional[List[Dict[str, Any]]] = None,
+    truncate_chars: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build one session memory record with nested child sessions."""
+    record: Dict[str, Any] = {
+        "schema_version": 2,
+        "record_type": "session_memory",
+        "session": session.get("slug"),
+        "session_id": session.get("id"),
+        "session_title": session.get("thread_name") or session.get("slug"),
+        "project": session.get("project"),
+        "project_key": session.get("project_key"),
+        "project_id": session.get("project_id"),
+        "project_date": session.get("project_date"),
+        "project_folder": session.get("project_folder"),
+        "date": session.get("date"),
+        "cwd": session.get("cwd"),
+        "workspace_roots": session.get("workspace_roots") or [],
+        "parent_thread_id": session.get("parent_thread_id"),
+        "agent_role": session.get("agent_role"),
+        "agent_nickname": session.get("agent_nickname"),
+        "thread_source": session.get("thread_source"),
+        "source_file": session.get("source_file"),
+        "events": events,
+        "messages": [_truncated_copy(item, truncate_chars) for item in messages],
+        "parts": [_truncated_copy(item, truncate_chars) for item in parts],
+        "usage": usage,
+        "children": children or [],
+    }
+    if session.get("parent_unresolved"):
+        record["parent_unresolved"] = True
+    return record
 
-    This product is intentionally message-oriented: it keeps user, assistant, and
-    optional developer snippets in a single schema suitable for downstream
-    indexing and retrieval. The raw event stream remains in `memory`.
-    """
-    lines = []
-    for message in messages:
-        role = message.get("role")
-        if role not in ("user", "assistant", "developer"):
-            continue
-        text = message.get("text")
-        if text is None:
-            continue
-        payload = {
-            "schema_version": 1,
-            "session": session_name,
-            "type": "message",
-            "role": role,
-            "timestamp": message.get("timestamp"),
-            "turn_id": message.get("turn_id"),
-            "ordinal": message.get("ordinal"),
-            "text": text,
-        }
-        if session_id:
-            payload["session_id"] = session_id
-        if session_title:
-            payload["session_title"] = session_title
-        lines.append(json.dumps(payload, ensure_ascii=False))
-    return "\n".join(lines)
+
+def build_corpus_document(
+    session: Dict[str, Any],
+    documents: List[Dict[str, Any]],
+    truncate_chars: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build one flattened corpus document from a root and its child sessions."""
+    labeled = []
+    contents = []
+    source_files = []
+    child_session_ids = []
+    message_count = 0
+
+    for position, document in enumerate(documents):
+        member = document.get("session") or {}
+        source_file = member.get("source_file")
+        if source_file and source_file not in source_files:
+            source_files.append(source_file)
+        if position:
+            session_id = member.get("id")
+            if session_id and str(session_id) not in child_session_ids:
+                child_session_ids.append(str(session_id))
+        for message in document.get("messages") or []:
+            text = str(message.get("text") or "")
+            if not text:
+                continue
+            if truncate_chars and len(text) > truncate_chars:
+                text = text[:truncate_chars] + "..."
+            role = str(message.get("role") or "message")
+            labeled.append(f"[{role}] {text}")
+            contents.append(text)
+            message_count += 1
+
+    record: Dict[str, Any] = {
+        "schema_version": 2,
+        "record_type": "corpus_document",
+        "session": session.get("slug"),
+        "session_id": session.get("id"),
+        "session_title": session.get("thread_name") or session.get("slug"),
+        "project": session.get("project"),
+        "project_key": session.get("project_key"),
+        "project_id": session.get("project_id"),
+        "project_date": session.get("project_date"),
+        "project_folder": session.get("project_folder"),
+        "date": session.get("date"),
+        "cwd": session.get("cwd"),
+        "source_files": source_files,
+        "child_session_ids": child_session_ids,
+        "message_count": message_count,
+        "text": "\n".join(labeled),
+        "content": "\n".join(contents),
+    }
+    if session.get("parent_unresolved"):
+        record["parent_unresolved"] = True
+    return record
+
+
+def format_jsonl_memory(record: Dict[str, Any]) -> str:
+    """Serialize one session-structured memory record as JSONL."""
+    return json.dumps(record, ensure_ascii=False)
+
+
+def format_jsonl_corpus(document: Dict[str, Any]) -> str:
+    """Serialize one flattened corpus document as JSONL."""
+    return json.dumps(document, ensure_ascii=False)

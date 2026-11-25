@@ -628,6 +628,92 @@ def extract_session_events_from_jsonl(file_path: Path) -> List[dict]:
     return events
 
 
+def extract_session_messages_and_parts(file_path: Path) -> Dict[str, List[dict]]:
+    """Read native message records and their content parts from one session."""
+    messages: List[dict] = []
+    parts: List[dict] = []
+    seen_messages = set()
+
+    def turn_id_from(payload: dict) -> str:
+        metadata = payload.get("internal_chat_message_metadata_passthrough") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        return str(payload.get("turn_id") or metadata.get("turn_id") or "")
+
+    with open(file_path, "r", encoding="utf-8") as handle:
+        for ordinal, line in enumerate(handle):
+            line = line.strip()
+            if not line:
+                continue
+
+            data = parse_jsonl_line(line)
+            if not isinstance(data, dict):
+                continue
+
+            record_type = data.get("type")
+            payload = data.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+
+            timestamp = str(data.get("timestamp") or payload.get("timestamp") or "")
+            role = None
+            content = None
+
+            if record_type == "response_item":
+                if str(payload.get("type", "")).lower() == "message":
+                    role = detect_role(payload)
+                    content = payload.get("content", [])
+            elif record_type == "turn_context":
+                role = detect_role(payload)
+                content = payload.get("content", [])
+            elif record_type == "event_msg":
+                event_type = str(payload.get("type", "")).lower()
+                if event_type in ("user_message", "agent_message"):
+                    role = "user" if event_type == "user_message" else "assistant"
+                    text = payload.get("message") or payload.get("text") or ""
+                    if not isinstance(text, str):
+                        text = extract_text_from_content(text)
+                    content = [{"type": "input_text", "text": text}]
+
+            if role is None or content is None:
+                continue
+
+            text = extract_text_from_content(content)
+            if not text:
+                continue
+
+            body = _event_payload_text(text).strip()
+            if role == "user":
+                body = strip_environment_context(body)
+            if not body:
+                continue
+
+            dedupe_key = (role, timestamp, body)
+            if dedupe_key in seen_messages:
+                continue
+            seen_messages.add(dedupe_key)
+
+            messages.append({
+                "ordinal": ordinal,
+                "timestamp": timestamp,
+                "role": role,
+                "text": body,
+                "turn_id": turn_id_from(payload),
+                "payload": payload,
+            })
+
+            blocks = content if isinstance(content, list) else []
+            for part_index, block in enumerate(blocks):
+                if not isinstance(block, dict):
+                    continue
+                part = dict(block)
+                part["message_ordinal"] = ordinal
+                part["part_index"] = part_index
+                parts.append(part)
+
+    return {"messages": messages, "parts": parts}
+
+
 def retain_recent_turns(events: List[dict], recent_turns: Optional[int]) -> List[dict]:
     """Keep the final N user turns, including their assistant/tool events.
 
